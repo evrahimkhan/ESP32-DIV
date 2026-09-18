@@ -78,8 +78,115 @@ jobs:
           PY
           find Libraries -type f -name '*.zip' ! -iname '*TFT*' -print0 | while IFS= read -r -d '' zip; do arduino-cli lib install --zip-path "$zip"; done
           cp "Libraries/User_Setup v2.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
+      - name: Validate selected Arduino board configuration
+        run: arduino-cli board details --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" >/dev/null
+      - name: Configure selected hardware model
+        env:
+          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMiIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
+        run: |
+          python - <<'PY'
+          import base64, json, os, pathlib, re
+          cfg = json.loads(base64.b64decode(os.environ["ESPFORGE_BOARD_CONFIG"]))
+          names = set(cfg["macros"])
+          for filename in cfg["paths"]:
+              path = pathlib.Path(filename)
+              if not path.is_file():
+                  continue
+              lines = path.read_text(errors="ignore").splitlines(keepends=True)
+              output = []
+              for line in lines:
+                  match = re.match(r"^(\s*)(?://\s*)?#\s*define\s+([A-Z][A-Z0-9_]*)(.*)$", line)
+                  if not match or match.group(2) not in names:
+                      output.append(line); continue
+                  prefix, name, suffix = match.groups()
+                  ending = chr(10) if line.endswith(chr(10)) else ""
+                  if name == cfg["selected"]:
+                      output.append(f"{prefix}#define {name}{suffix.rstrip()}{ending}")
+                  else:
+                      output.append(f"{prefix}// ESPForge disabled: #define {name}{suffix.rstrip()}{ending}")
+              path.write_text("".join(output))
+          PY
       - name: Compile firmware
         run: arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" --output-dir firmware-output 'ESP32-DIV'
+      - name: Name firmware files for selected hardware
+        env:
+          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V2"
+        run: |
+          python - <<'PY'
+          import os, pathlib, re
+          root = pathlib.Path("firmware-output")
+          prefix = os.environ["ESPFORGE_ARTIFACT_PREFIX"]
+          def role(path):
+              name = path.name.lower()
+              if "bootloader" in name: return "bootloader", ".bin"
+              if "partition" in name: return "partitions", ".bin"
+              if "merged" in name or "merged-flash" in name: return "merged", ".bin"
+              if any(item in name for item in ("littlefs", "spiffs", "fatfs", "filesystem")): return "filesystem", ".bin"
+              if name.endswith(".elf"): return "application", ".elf"
+              if name.endswith(".map"): return "application", ".map"
+              if name == "firmware.bin" or name.endswith(".ino.bin"): return "application", ".bin"
+              label = re.sub(r"[^a-z0-9_.-]+", "-", path.stem).strip(".-") or "firmware"
+              return label, path.suffix or ".bin"
+          for path in [item for item in root.rglob("*") if item.is_file()]:
+              label, extension = role(path)
+              filename = f"{prefix}-{label}{extension}"
+              destination, counter = root / filename, 2
+              while destination.exists() and destination != path:
+                  destination = root / f"{prefix}-{label}-{counter}{extension}"
+                  counter += 1
+              if destination != path:
+                  path.replace(destination)
+          for directory in sorted([item for item in root.rglob("*") if item.is_dir()], reverse=True):
+              try: directory.rmdir()
+              except OSError: pass
+          PY
+      - name: Generate ESPForge flashing manifest
+        env:
+          ESPFORGE_FRAMEWORK: "arduino"
+          ESPFORGE_CHIP: "esp32s3"
+          ESPFORGE_CONFIG_DIGEST: "21d638fd834d7eb1b7cebf550fe42bcf7447f61d95cdf9b0223ef4cbb79b153c"
+          ESPFORGE_ANALYZER_VERSION: "targets-v7"
+        run: |
+          python - <<'PY'
+          import hashlib, json, os, pathlib, subprocess
+          root = pathlib.Path("firmware-output")
+          offsets = {}
+          # Consume only offsets emitted authoritatively by PlatformIO/ESP-IDF.
+          # Never guess an address from a filename or board family.
+          for candidate in list(pathlib.Path('.').glob('**/flasher_args.json')):
+              try:
+                  payload = json.loads(candidate.read_text())
+                  for address, filename in payload.get('flash_files', {}).items(): offsets[pathlib.Path(filename).name] = int(address, 0)
+              except (OSError, ValueError, TypeError, json.JSONDecodeError): pass
+          for candidate in list(pathlib.Path('.').glob('**/flash_args')) + list(pathlib.Path('.').glob('**/flash_project_args')):
+              try:
+                  tokens = candidate.read_text().split()
+                  for index, token in enumerate(tokens[:-1]):
+                      if token.startswith('0x') and tokens[index + 1].lower().endswith('.bin'): offsets[pathlib.Path(tokens[index + 1]).name] = int(token, 16)
+              except (OSError, ValueError): pass
+          files = []
+          for path in sorted(root.rglob("*.bin")):
+              data = path.read_bytes()
+              files.append({
+                  "path": path.relative_to(root).as_posix(),
+                  "size": len(data),
+                  "sha256": hashlib.sha256(data).hexdigest(),
+                  "offset": offsets.get(path.name)
+              })
+          manifest = {
+              "schema": "https://espforge.dev/schemas/flash-manifest-v1.json",
+              "version": 1,
+              "chip": os.environ["ESPFORGE_CHIP"],
+              "framework": os.environ["ESPFORGE_FRAMEWORK"],
+              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "configuration_sha256": os.environ["ESPFORGE_CONFIG_DIGEST"] or None,
+              "analyzer_version": os.environ["ESPFORGE_ANALYZER_VERSION"] or None,
+              "files": files,
+              "warning": "Offsets are included only when emitted by the project toolchain. Manually verify any file whose offset is null."
+          }
+          root.mkdir(parents=True, exist_ok=True)
+          (root / "espforge-manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
+          PY
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:
           name: espforge-firmware
