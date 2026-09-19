@@ -8,6 +8,10 @@ run-name: ESPForge build ${{ inputs.espforge_build_uuid || github.event.client_p
         description: Unique ESPForge build identifier
         required: true
         type: string
+      espforge_source_commit:
+        description: Immutable source revision to compile
+        required: true
+        type: string
   repository_dispatch:
     types: [espforge_build]
 
@@ -25,6 +29,7 @@ jobs:
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
+          ref: ${{ inputs.espforge_source_commit || github.event.client_payload.espforge_source_commit }}
           persist-credentials: false
           submodules: recursive
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
@@ -79,10 +84,10 @@ jobs:
           find Libraries -type f -name '*.zip' ! -iname '*TFT*' -print0 | while IFS= read -r -d '' zip; do arduino-cli lib install --zip-path "$zip"; done
           cp "Libraries/User_Setup v2.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
       - name: Validate selected Arduino board configuration
-        run: arduino-cli board details --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" >/dev/null
+        run: arduino-cli board details --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" >/dev/null
       - name: Configure selected hardware model
         env:
-          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0NZRCIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
+          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMiIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
         run: |
           python - <<'PY'
           import base64, json, os, pathlib, re
@@ -107,10 +112,10 @@ jobs:
               path.write_text("".join(output))
           PY
       - name: Compile firmware
-        run: arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" --output-dir firmware-output 'ESP32-DIV'
+        run: arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" --output-dir firmware-output 'ESP32-DIV'
       - name: Name firmware files for selected hardware
         env:
-          ESPFORGE_ARTIFACT_PREFIX: "Board-Cyd"
+          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V2"
         run: |
           python - <<'PY'
           import os, pathlib, re
@@ -143,9 +148,9 @@ jobs:
       - name: Generate ESPForge flashing manifest
         env:
           ESPFORGE_FRAMEWORK: "arduino"
-          ESPFORGE_CHIP: "esp32"
-          ESPFORGE_CONFIG_DIGEST: "fc81f6c2bf816471c06191ed3c68008115274eaa9cbaa708a4bf61461bbb8f09"
-          ESPFORGE_ANALYZER_VERSION: "targets-v10"
+          ESPFORGE_CHIP: "esp32s3"
+          ESPFORGE_CONFIG_DIGEST: "9d19d5646bbfdc05d5bd91e383c3053743913e17533a9ed6c4e02415020ec3ec"
+          ESPFORGE_ANALYZER_VERSION: "targets-v11"
         run: |
           python - <<'PY'
           import hashlib, json, os, pathlib, subprocess
