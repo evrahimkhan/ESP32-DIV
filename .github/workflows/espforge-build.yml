@@ -82,7 +82,7 @@ jobs:
         run: arduino-cli board details --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" >/dev/null
       - name: Configure selected hardware model
         env:
-          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMSIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
+          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0NZRCIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
         run: |
           python - <<'PY'
           import base64, json, os, pathlib, re
@@ -110,7 +110,7 @@ jobs:
         run: arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" --output-dir firmware-output 'ESP32-DIV'
       - name: Name firmware files for selected hardware
         env:
-          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V1"
+          ESPFORGE_ARTIFACT_PREFIX: "Board-Cyd"
         run: |
           python - <<'PY'
           import os, pathlib, re
@@ -144,7 +144,7 @@ jobs:
         env:
           ESPFORGE_FRAMEWORK: "arduino"
           ESPFORGE_CHIP: "esp32"
-          ESPFORGE_CONFIG_DIGEST: "ca3dccdaa92abd69aa44a7530995df0ed6e7a2f28f6e6b440fe13faf98df43e9"
+          ESPFORGE_CONFIG_DIGEST: "fc81f6c2bf816471c06191ed3c68008115274eaa9cbaa708a4bf61461bbb8f09"
           ESPFORGE_ANALYZER_VERSION: "targets-v10"
         run: |
           python - <<'PY'
