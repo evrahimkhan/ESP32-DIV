@@ -79,10 +79,10 @@ jobs:
           find Libraries -type f -name '*.zip' ! -iname '*TFT*' -print0 | while IFS= read -r -d '' zip; do arduino-cli lib install --zip-path "$zip"; done
           cp "Libraries/User_Setup v2.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
       - name: Validate selected Arduino board configuration
-        run: arduino-cli board details --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" >/dev/null
+        run: arduino-cli board details --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" >/dev/null
       - name: Configure selected hardware model
         env:
-          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMiIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
+          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMSIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
         run: |
           python - <<'PY'
           import base64, json, os, pathlib, re
@@ -107,10 +107,10 @@ jobs:
               path.write_text("".join(output))
           PY
       - name: Compile firmware
-        run: arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" --output-dir firmware-output 'ESP32-DIV'
+        run: arduino-cli compile --fqbn "esp32:esp32:esp32:PartitionScheme=huge_app" --output-dir firmware-output 'ESP32-DIV'
       - name: Name firmware files for selected hardware
         env:
-          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V2"
+          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V1"
         run: |
           python - <<'PY'
           import os, pathlib, re
@@ -143,9 +143,9 @@ jobs:
       - name: Generate ESPForge flashing manifest
         env:
           ESPFORGE_FRAMEWORK: "arduino"
-          ESPFORGE_CHIP: "esp32s3"
-          ESPFORGE_CONFIG_DIGEST: "21d638fd834d7eb1b7cebf550fe42bcf7447f61d95cdf9b0223ef4cbb79b153c"
-          ESPFORGE_ANALYZER_VERSION: "targets-v7"
+          ESPFORGE_CHIP: "esp32"
+          ESPFORGE_CONFIG_DIGEST: "ca3dccdaa92abd69aa44a7530995df0ed6e7a2f28f6e6b440fe13faf98df43e9"
+          ESPFORGE_ANALYZER_VERSION: "targets-v10"
         run: |
           python - <<'PY'
           import hashlib, json, os, pathlib, subprocess
