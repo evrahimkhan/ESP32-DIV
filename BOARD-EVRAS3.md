@@ -292,6 +292,17 @@ the radio stack is where it dies — and in a pinch you still get a usable devic
 
 ## Behaviour with missing hardware
 
+This board has **no SD card-detect switch** (GPIO 38 is the touch clock), unlike the V2
+board which senses card presence on GPIO 38. A missing card is therefore found by probing
+the bus, and each probe ends by tearing the shared SPI bus down and rebuilding it — so the
+firmware probes **once per boot** and then stops, printing `[sd] no card - not probing
+again this boot`. Open an SD-backed feature (Ducky, captures, logs) to retry.
+
+That deferral matters: the classic-ESP32 build does not mount SD at boot at all, for the
+same reason, and its own comment records that boot mounting on a card-less board *"was
+rebooting right after the intro"*.
+
+
 | Menu entry | What happens on this board |
 |---|---|
 | IR Remote | Talks to unused GPIO 1/2. Harmless — no hang, nothing to capture. |

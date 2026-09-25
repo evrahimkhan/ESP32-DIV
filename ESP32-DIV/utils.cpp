@@ -1076,11 +1076,15 @@ bool isSDCardAvailable() {
     SD.end();
   }
 
-#if !BOARD_HAS_ESP32S3
+  // Boards with a card-detect switch bail out above when no card is in the slot.
+  // EVRAS3 has no switch (GPIO 38 is its touch clock), so this is the only thing
+  // that stops a card-less board from re-probing: every attempt below ends with
+  // reclaimSharedSpiBus(), which tears the shared SPI bus down and back up under
+  // TFT_eSPI, and that happens several times per boot otherwise. Features that
+  // need the card call sdRetryMount() to force a fresh attempt.
   if (s_sdMountGaveUp) {
     return false;
   }
-#endif
 
   // Prefer a soft remount so SubGHz (CC1101 on the same SPI pins) stays alive.
   if (sdRemountSoft()) {
@@ -1091,12 +1095,10 @@ bool isSDCardAvailable() {
   // Only do the destructive reclaim when no radio feature owns the bus.
   if (!feature_active) {
     restoreSdAfterSharedSpi();
-#if !BOARD_HAS_ESP32S3
     if (!s_sdFsMounted) {
       s_sdMountGaveUp = true;
-      Serial.println("[sd] mount failed — will not retry until reboot");
+      Serial.println("[sd] no card — not probing again this boot");
     }
-#endif
     return s_sdFsMounted;
   }
   return false;
