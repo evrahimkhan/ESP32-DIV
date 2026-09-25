@@ -41,3 +41,9 @@ const char* settingsBoardProfileId();
 void settingsApplyBoardTouchDefaults();
 bool settingsLoad();
 bool settingsSave();
+
+/** Touch calibration, kept in NVS so it survives without an SD card. */
+bool settingsLoadTouchFromNvs();
+bool settingsSaveTouchToNvs();
+/** True when the last settingsSave() stored the touch calibration in NVS. */
+bool settingsTouchInNvs();

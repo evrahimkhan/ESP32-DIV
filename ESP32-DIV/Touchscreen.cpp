@@ -89,6 +89,28 @@ static bool touchSampleOk(uint16_t zThresh, int16_t& rawX, int16_t& rawY) {
 #endif
 }
 
+#if !TOUCH_SHARES_TFT_SPI
+bool readTouchRawXYZ(int16_t& x, int16_t& y, int16_t& z, uint16_t zThresh) {
+  ensureTouchSpiReady();
+  if (!ts.touched()) {
+    x = 0;
+    y = 0;
+    z = 0;
+    return false;
+  }
+  TS_Point p = ts.getPoint();
+  z = p.z;
+  if (p.z < (int16_t)zThresh) {
+    x = 0;
+    y = 0;
+    return false;
+  }
+  x = p.x;
+  y = p.y;
+  return true;
+}
+#endif
+
 void setupTouchscreen() {
   if (s_touchInitialized) {
     return;
@@ -101,6 +123,15 @@ void setupTouchscreen() {
   ensureTouchSpiReady();
   ts.begin(touchscreenSPI);
   ts.setRotation(TOUCH_ROTATION);
+  // The library configures its interrupt pin as a plain INPUT. An unconnected
+  // IRQ line then floats and produces phantom edges, so hold it high: the
+  // XPT2046 pulls PENIRQ low when the panel is touched.
+  {
+    const int irq = touchIrqPin();
+    if (irq >= 0) {
+      pinMode(irq, INPUT_PULLUP);
+    }
+  }
 #endif
 
   s_touchInitialized = true;
@@ -120,6 +151,25 @@ bool isTouchDownDismiss(uint16_t zThresh) {
 
 bool readTouchRawXY(int16_t& x, int16_t& y, uint16_t zThresh) {
   return touchSampleOk(zThresh, x, y);
+}
+
+int touchIrqPin() {
+#if defined(XPT2046_IRQ) && (XPT2046_IRQ >= 0) && (XPT2046_IRQ < 255)
+  return XPT2046_IRQ;
+#else
+  return -1;
+#endif
+}
+
+int touchIrqLevel() {
+  const int pin = touchIrqPin();
+#if !TOUCH_SHARES_TFT_SPI
+  if (pin >= 0) {
+    return digitalRead(pin) == LOW ? 1 : 0;
+  }
+#endif
+  (void)pin;
+  return -1;
 }
 
 static void mapTouchToScreen(int16_t rawX, int16_t rawY, int& x, int& y) {

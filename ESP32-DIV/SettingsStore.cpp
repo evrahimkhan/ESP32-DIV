@@ -1,4 +1,5 @@
 #include <ArduinoJson.h>
+#include <Preferences.h>
 #include <SD.h>
 #include "SettingsStore.h"
 #include "utils.h"
@@ -42,6 +43,50 @@ void settingsApplyBoardTouchDefaults() {
   s.touchYMax = TOUCH_Y_MAX;
 }
 
+/* Touch calibration in NVS, under a per-board namespace so flashing two boards
+ * from the same sketch cannot swap each other's calibration. The SD card keeps
+ * the full settings file; NVS exists so the calibration survives on a board
+ * with no card in the slot, where settingsSave() cannot write at all. */
+static const char* TOUCH_NVS_NAMESPACE = "divtouch";
+static bool s_touchInNvs = false;
+
+bool settingsTouchInNvs() { return s_touchInNvs; }
+
+bool settingsLoadTouchFromNvs() {
+  Preferences prefs;
+  if (!prefs.begin(TOUCH_NVS_NAMESPACE, true)) {
+    return false;
+  }
+  String board = prefs.getString("board", "");
+  bool ok = (board == TOUCH_PROFILE_ID) && prefs.isKey("xMin") && prefs.isKey("yMax");
+  if (ok) {
+    auto& s = g_settings;
+    s.touchXMin = prefs.getUShort("xMin", s.touchXMin);
+    s.touchXMax = prefs.getUShort("xMax", s.touchXMax);
+    s.touchYMin = prefs.getUShort("yMin", s.touchYMin);
+    s.touchYMax = prefs.getUShort("yMax", s.touchYMax);
+  }
+  prefs.end();
+  return ok;
+}
+
+bool settingsSaveTouchToNvs() {
+  Preferences prefs;
+  if (!prefs.begin(TOUCH_NVS_NAMESPACE, false)) {
+    s_touchInNvs = false;
+    return false;
+  }
+  auto& s = g_settings;
+  prefs.putString("board", TOUCH_PROFILE_ID);
+  prefs.putUShort("xMin", s.touchXMin);
+  prefs.putUShort("xMax", s.touchXMax);
+  prefs.putUShort("yMin", s.touchYMin);
+  prefs.putUShort("yMax", s.touchYMax);
+  prefs.end();
+  s_touchInNvs = true;
+  return true;
+}
+
 static bool settingsTouchSavedForBoard(const StaticJsonDocument<512>& doc) {
   JsonObjectConst touch = doc["touch"];
   if (touch.isNull()) {
@@ -83,11 +128,24 @@ static bool ensureDir(const char* dirPath) {
   return true;
 }
 
+/** Nothing on the SD card to load (or no card at all): NVS still has the
+ *  calibration from the last Tools -> Touch Calibrate run. */
+static void settingsLoadTouchFallback() {
+  settingsApplyBoardTouchDefaults();
+  settingsLoadTouchFromNvs();
+}
+
 bool settingsLoad() {
   settingsApplyBoardTouchDefaults();
   sdRetryMount();
-  if (!mountSD()) return false;
-  if (!SD.exists(SETTINGS_PATH)) return true;
+  if (!mountSD()) {
+    settingsLoadTouchFallback();
+    return false;
+  }
+  if (!SD.exists(SETTINGS_PATH)) {
+    settingsLoadTouchFallback();
+    return true;
+  }
 
   File f = SD.open(SETTINGS_PATH, FILE_READ);
   if (!f) return false;
@@ -120,25 +178,32 @@ bool settingsLoad() {
     s.touchYMax = touch["yMax"] | s.touchYMax;
   } else {
     settingsApplyBoardTouchDefaults();
+    settingsLoadTouchFromNvs();
   }
 
   return true;
 }
 
+
 bool settingsSave() {
+  // NVS always, so a calibration survives on a board with no card. The SD copy
+  // is the fuller record (brightness, theme, accent), so try it too and report
+  // success when either one kept the settings.
+  const bool nvsOk = settingsSaveTouchToNvs();
+
   sdRetryMount();
 
   if (!ensureDir("/config")) {
     sd_mounted = false;
-    if (!ensureDir("/config")) return false;
+    if (!ensureDir("/config")) return nvsOk;
   }
 
   File f = SD.open(SETTINGS_PATH, FILE_WRITE);
   if (!f) {
     sd_mounted = false;
-    if (!mountSD()) return false;
+    if (!mountSD()) return nvsOk;
     f = SD.open(SETTINGS_PATH, FILE_WRITE);
-    if (!f) return false;
+    if (!f) return nvsOk;
   }
 
   auto& s = g_settings;

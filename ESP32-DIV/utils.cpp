@@ -3138,6 +3138,99 @@ void loop() {
 
 } // namespace SdFileManager
 
+namespace TouchTest {
+
+/** Read-only view of everything the touch path sees: the IRQ line, the raw
+ *  controller values and the mapped screen position. Nothing is saved, so it is
+ *  safe to open before calibrating — and it is what tells a dead panel apart
+ *  from a mis-mapped one. Exit with the on-screen Back or the nav bar. */
+static void drawFrame() {
+  tft.fillScreen(UI_BG);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(UI_TEXT, UI_BG);
+  tft.setCursor(8, 8);
+  tft.print("Touch Test");
+  tft.setTextColor(UI_DIM_TEXT, UI_BG);
+  tft.setCursor(8, 22);
+  tft.print("Press the panel: numbers below move");
+  tft.setCursor(8, 34);
+  tft.print("Empty slot: irq high, raw 0");
+
+  // crosshair target to watch the mapped position against
+  tft.drawFastVLine(DISPLAY_WIDTH / 2, 60, DISPLAY_HEIGHT - 120, UI_LINE);
+  tft.drawFastHLine(0, DISPLAY_HEIGHT / 2, DISPLAY_WIDTH, UI_LINE);
+  tft.drawRect(4, 52, DISPLAY_WIDTH - 8, 32, UI_LINE);
+  tft.setCursor(8, 58);
+  tft.setTextColor(UI_DIM_TEXT, UI_BG);
+  tft.print("touch anywhere in the big area");
+}
+
+// Sit above the touch nav bar, whose height changes with the build settings.
+static int touchTestRowY(int row) {
+  return touchNavContentBottomY() - 60 + row * 12;
+}
+
+static void printLine(int row, const char* text, uint16_t color) {
+  const int y = touchTestRowY(row);
+  tft.fillRect(0, y, DISPLAY_WIDTH, 12, UI_BG);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(color, UI_BG);
+  tft.setCursor(6, y);
+  tft.print(text);
+}
+
+void setup() {
+  drawFrame();
+}
+
+void loop() {
+  int16_t rx = 0, ry = 0, rz = 0;
+  const bool down = readTouchRawXYZ(rx, ry, rz, 200);
+  const int irq = touchIrqLevel();
+
+  int mx = 0, my = 0;
+  const bool mapped = readTouchXY(mx, my);
+  auto& s = settings();
+
+  char line[64];
+  snprintf(line, sizeof(line), "irq pin %d : %s", touchIrqPin(),
+           irq < 0 ? "not used on this board" : (irq ? "LOW - pressed" : "high - idle"));
+  printLine(0, line, UI_TEXT);
+
+  snprintf(line, sizeof(line), "raw  x %4d  y %4d  z %4d  %s",
+           (int)rx, (int)ry, (int)rz, down ? "DOWN" : "----");
+  printLine(1, line, down ? UI.ok : UI_DIM_TEXT);
+
+  snprintf(line, sizeof(line), "map  x %4d  y %4d  %s",
+           mx, my, mapped ? "" : "(none)");
+  printLine(2, line, mapped ? UI.ok : UI_DIM_TEXT);
+
+  snprintf(line, sizeof(line), "cal  x[%u..%u] y[%u..%u] %s",
+           (unsigned)s.touchXMin, (unsigned)s.touchXMax,
+           (unsigned)s.touchYMin, (unsigned)s.touchYMax,
+           settingsTouchInNvs() ? "nvs" : "-");
+  printLine(3, line, UI_DIM_TEXT);
+
+  // Where the touch landed, so a mirrored or swapped axis is obvious.
+  if (mapped && my < touchNavContentBottomY()) {
+    tft.drawCircle(mx, my, 4, UI_ICON);
+    tft.drawPixel(mx, my, UI.ok);
+  }
+
+  // Leave the way every other touch-driven screen does: the nav bar's middle
+  // cell (or the physical select button, on boards that have one).
+  maintainTouchNavBar();
+  if (featureExitButtonPressed() || isButtonPressed(BTN_SELECT)) {
+    feature_exit_requested = true;
+    return;
+  }
+  delay(40);
+}
+
+} // namespace TouchTest
+
 namespace TouchCalib {
 static int stepIdx = 0;
 static uint16_t xs[4], ys[4];
@@ -3151,6 +3244,33 @@ static void drawTarget(int x,int y){
   tft.setCursor(70, 8);
   tft.setTextColor(UI_TEXT, UI_BG);
   tft.print("Touch the target");
+}
+
+/** Live readout under the target.
+ *
+ *  Without it a dead panel and a badly mapped one look identical. If the raw
+ *  numbers never move while you press, the controller is not being read at all
+ *  (usually the IRQ line - see touchIrqLevel()); if they move but the target
+ *  lands somewhere else, it is mapping and calibrating fixes it. */
+static void drawLiveReadout(int step) {
+  int16_t rx = 0, ry = 0, rz = 0;
+  const bool down = readTouchRawXYZ(rx, ry, rz, 200);
+  const int irq = touchIrqLevel();
+
+  char line[64];
+  snprintf(line, sizeof(line), "point %d/4   irq:%s", step + 1,
+           irq < 0 ? "none" : (irq ? "LOW" : "high"));
+  tft.fillRect(0, DISPLAY_HEIGHT - 34, DISPLAY_WIDTH, 34, UI_BG);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(UI_DIM_TEXT, UI_BG);
+  tft.setCursor(4, DISPLAY_HEIGHT - 32);
+  tft.print(line);
+
+  snprintf(line, sizeof(line), "raw x%4d y%4d z%4d", (int)rx, (int)ry, (int)rz);
+  tft.setCursor(4, DISPLAY_HEIGHT - 20);
+  tft.setTextColor(down ? UI.ok : UI_DIM_TEXT, UI_BG);
+  tft.print(line);
 }
 
 void setup(){
@@ -3183,18 +3303,27 @@ void loop(){
     tft.setCursor(70,28);
     tft.printf("X:[%u..%u] Y:[%u..%u]", xMin,xMax,yMin,yMax);
 
-    delay(1200);
+    tft.setCursor(70,48);
+    tft.print(settingsTouchInNvs() ? "saved to NVS" : "NVS write failed");
+    tft.setCursor(70,64);
+    tft.print(isSDCardAvailable() ? "also on SD card" : "no SD card (NVS only)");
+
+    delay(1800);
     feature_exit_requested = true;
     return;
   }
+
+  drawLiveReadout(stepIdx);
 
   int16_t rx = 0, ry = 0;
   if (readTouchRawXY(rx, ry)) {
     xs[stepIdx] = (uint16_t)rx;
     ys[stepIdx] = (uint16_t)ry;
     stepIdx++;
-    if (stepIdx<4) drawTarget(pts[stepIdx][0], pts[stepIdx][1]);
+    if (stepIdx<4) {
+      drawTarget(pts[stepIdx][0], pts[stepIdx][1]);
+    }
   }
-  delay(100);
+  delay(60);
 }
 }

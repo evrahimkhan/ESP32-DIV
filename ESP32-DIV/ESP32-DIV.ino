@@ -130,11 +130,12 @@ const char *subghz_submenu_items[subghz_NUM_SUBMENU_ITEMS] = {
     "Saved Profile",
     "Back to Main Menu"};
 
-const int tools_NUM_SUBMENU_ITEMS = 5;
+const int tools_NUM_SUBMENU_ITEMS = 6;
 const char *tools_submenu_items[tools_NUM_SUBMENU_ITEMS] = {
     "Serial Monitor",
     "Update Firmware",
     "Touch Calibrate",
+    "Touch Test",
     "SD File Manager",
     "Back to Main Menu"};
 
@@ -265,6 +266,7 @@ const unsigned char *tools_submenu_icons[tools_NUM_SUBMENU_ITEMS] = {
     bitmap_icon_bash,
     bitmap_icon_follow,
     bitmap_icon_undo,
+    bitmap_icon_selection,
     bitmap_icon_sdcard,
     bitmap_icon_go_back
 };
@@ -3508,9 +3510,10 @@ void handleSubGHzSubmenuButtons() {
 constexpr int TOOLS_IDX_TERMINAL = 0;
 constexpr int TOOLS_IDX_UPDATE   = 1;
 constexpr int TOOLS_IDX_TOUCH    = 2;
-constexpr int TOOLS_IDX_SD_FILES = 3;
+constexpr int TOOLS_IDX_TOUCHTEST = 3;
+constexpr int TOOLS_IDX_SD_FILES = 4;
 constexpr int TOOLS_IDX_SETTINGS = -1;
-constexpr int TOOLS_IDX_BACK     = 4;
+constexpr int TOOLS_IDX_BACK     = 5;
 
 static void runToolsFeatureExitCleanup() {
     in_sub_menu = true;
@@ -3561,6 +3564,9 @@ static void launchToolsFeature(int idx) {
             break;
         case TOOLS_IDX_TOUCH:
             runToolsFeature(idx, TouchCalib::setup, TouchCalib::loop);
+            break;
+        case TOOLS_IDX_TOUCHTEST:
+            runToolsFeature(idx, TouchTest::setup, TouchTest::loop);
             break;
         case TOOLS_IDX_SD_FILES:
             runToolsFeature(idx, SdFileManager::setup, SdFileManager::loop);

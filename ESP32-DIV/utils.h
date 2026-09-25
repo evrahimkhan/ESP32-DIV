@@ -104,6 +104,7 @@ void initSDCard();
 
 namespace AppSettingsUI{ void setup(); void loop(); }
 namespace TouchCalib{ void setup(); void loop(); }
+namespace TouchTest{ void setup(); void loop(); }
 
 namespace Terminal {
   void terminalSetup();
