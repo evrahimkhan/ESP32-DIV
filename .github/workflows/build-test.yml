@@ -153,7 +153,36 @@ jobs:
       - name: Test the board pin map
         run: tools/build-and-test.sh --board ${{ matrix.board }} --test-only
       - name: Compile firmware
-        run: tools/build-and-test.sh --board ${{ matrix.board }} --fqbn "${{ matrix.fqbn }}" --skip-test --skip-install --no-sync-usersetup --output firmware-output
+        run: |
+          set -uo pipefail
+          set +e
+          tools/build-and-test.sh --board ${{ matrix.board }} --fqbn "${{ matrix.fqbn }}" \
+            --skip-test --skip-install --no-sync-usersetup --output firmware-output 2>&1 | tee build.log
+          status=${PIPESTATUS[0]}
+          set -e
+          if [ "$status" -ne 0 ]; then
+            # Put the diagnostics where they cannot be missed: inline on the run
+            # as annotations, and in the job summary for anyone reading the page.
+            {
+              echo '### Compile failed: `${{ matrix.board }}`'
+              echo
+              echo '```'
+              grep -E 'error:|fatal error:|Error [0-9]' build.log | head -40 || true
+              echo '```'
+              echo
+              echo '```'
+              tail -20 build.log
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            annotate() {
+              sed -e 's/%/%25/g' -e 's/\r/%0D/g' | head -"${1}" | while IFS= read -r line; do
+                printf '::error::%s\n' "$line"
+              done
+            }
+            grep -E 'error:|fatal error:' build.log | annotate 30 || true
+            tail -20 build.log | annotate 20 || true
+          fi
+          exit "$status"
       - name: Report image size
         run: |
           set -euo pipefail
