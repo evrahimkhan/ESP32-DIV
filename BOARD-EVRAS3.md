@@ -318,6 +318,37 @@ low when touched) and this boot skips the BLE stack, the WiFi/BLE scan tasks and
 The panel then says `SAFE MODE - radios skipped`. If the board reaches the menu that way,
 the radio stack is where it dies — and in a pinch you still get a usable device.
 
+## Touch screen
+
+The XPT2046 sits on its own bus (SCK 38, MOSI 39, MISO 40, CS 41, IRQ 42), so the
+display's SPI traffic never disturbs it. Two firmware details decide whether touch works at
+all, and both are visible on screen:
+
+1. **`Tools → Touch Test`** shows, live: the IRQ pin state, the raw controller values and
+   the mapped screen position, with a marker where the touch landed. It saves nothing, so
+   it is safe to open before calibrating.
+2. **`Tools → Touch Calibrate`** reads the four corners and stores the result. It prints the
+   same live values under each target, and says where the calibration went.
+
+Reading the numbers:
+
+| what you see on Touch Test | what it means |
+| --- | --- |
+| `irq pin 42 : LOW - pressed` and raw values that change | the controller is being read; if taps land in the wrong place, calibrate |
+| `irq pin 42 : high - idle` even while pressing | the IRQ line is not reaching GPIO 42. The XPT2046 library only reads the panel from a falling-edge **interrupt** on that line, so nothing works until it is wired. |
+| `irq pin -1` | the build has no IRQ pin for this board |
+| raw values stuck at 0 while pressing | same as above — no sample was taken |
+| values move but the marker appears mirrored or swapped | the mapping needs calibrating; run Touch Calibrate |
+
+**Calibration is kept in NVS**, not only on the SD card, so it survives a reboot with no
+card in the slot — historically `Save FAILED` meant exactly that, because the settings file
+lives at `/config/settings.json` on the card. With a card present it is written to both.
+
+```bash
+# what the panel reports, over USB serial, while you press it
+arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
+```
+
 ## Behaviour with missing hardware
 
 This board has **no SD card-detect switch** (GPIO 38 is the touch clock), unlike the V2
