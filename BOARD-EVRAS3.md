@@ -91,7 +91,13 @@ branch and on pull requests to `main`, so pushing is enough to get a compile:
 | job | what it does |
 | --- | --- |
 | `pinmap` | host-side pin map checks for all four board profiles; no toolchain, fails in seconds |
-| `firmware` (matrix: `evras3`, `v2`) | installs arduino-cli + ESP32 core 2.0.10, selects the board macro, drops in that board's `User_Setup.h`, runs the pin map check, compiles, uploads the images |
+| `firmware` (matrix: `evras3`) | installs arduino-cli + ESP32 core 2.0.10, selects the board macro, drops in that board's `User_Setup.h`, runs the pin map check, compiles the merged image, uploads the artifacts |
+
+The matrix builds **this board only** — the ESP32-DIV v2 job was dropped from it. Adding a
+board back is one entry in the matrix (`board`, `macro`, `sketch`, `fqbn`; all four are in
+`tools/build-and-test.sh`). The `pinmap` job still checks every board profile's pin map on
+the host, which costs about a second and needs no toolchain, so a change that breaks
+another board's wiring is still caught before it compiles.
 
 A compile failure is published as annotations on the run and in the job summary, so the
 compiler errors are visible without opening the raw log.

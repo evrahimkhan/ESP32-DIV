@@ -211,7 +211,7 @@ live in one block of `ESP32-DIV/shared.h`:
 
 | Define | Target |
 |---|---|
-| `BOARD_ESP32_DIV_V2` | ESP32-DIV v2 (default) |
+| `BOARD_ESP32_DIV_V2` | ESP32-DIV v2 |
 | `BOARD_ESP32_DIV_V1` | ESP32-DIV v1 |
 | `BOARD_CYD` | Cheap Yellow Display (ESP32-2432S028R) |
 | `BOARD_EVRAS3` | Evrahim S3 — ESP32-S3 N16R8 + ST7789 + XPT2046 + CC1101 + NRF24 → [pin map & build](BOARD-EVRAS3.md) |
@@ -224,8 +224,10 @@ commands, or `--test-only` to check the wiring without a toolchain):
 tools/build-and-test.sh
 ```
 
-The CI workflow only runs on a dispatch, so `tools/ci-run.sh` triggers it for a branch and
-reports the result (`--list`, `--logs`, `--cancel` for the usual follow-ups).
+`.github/workflows/build-test.yml` builds and tests on GitHub on every push — the compile
+job builds `BOARD_EVRAS3` only, while the pin map checks still cover all four profiles.
+`tools/ci-run.sh` starts a run and reports the result (`--list`, `--logs`, `--cancel` for
+the usual follow-ups).
 
 <div>&nbsp;</div>
 

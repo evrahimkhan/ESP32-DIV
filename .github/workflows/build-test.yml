@@ -1,8 +1,11 @@
 name: Build and test
 
-# Build and test the firmware on GitHub. Runs on every push and pull request, and
-# on a `ci-run-*` tag - which is how tools/ci-run.sh starts a build on demand
-# without needing the workflow_dispatch permission.
+# Build and test the Evrahim S3 firmware on GitHub. Runs on every push and pull
+# request, and on a `ci-run-*` tag - which is how tools/ci-run.sh starts a build
+# on demand without needing the workflow_dispatch permission.
+#
+# The compile jobs build BOARD_EVRAS3 only (the ESP32-DIV v2 job was dropped
+# once this board was done); the pin map job still checks all four profiles.
 #
 #   tools/ci-run.sh         start a build for a branch and watch it
 #   tools/ci-run.sh --list  recent runs
@@ -50,14 +53,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Only the board this fork is built for. Add an entry here (board,
+          # macro, sketch, fqbn from tools/build-and-test.sh) to build another
+          # one; the host pin map checks below still cover every profile.
           - board: evras3
             macro: BOARD_EVRAS3
             sketch: Evrahim S3
             fqbn: "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc"
-          - board: v2
-            macro: BOARD_ESP32_DIV_V2
-            sketch: Esp32 Div V2
-            fqbn: "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio"
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
         with:
