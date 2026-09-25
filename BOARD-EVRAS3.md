@@ -330,6 +330,17 @@ That deferral matters: the classic-ESP32 build does not mount SD at boot at all,
 same reason, and its own comment records that boot mounting on a card-less board *"was
 rebooting right after the intro"*.
 
+Because there is no switch to say a card is missing, this board also skips the *destructive*
+part of the mount — the one that calls `SD.end()` and `SPI.end()`/`SPI.begin()` on the bus
+TFT_eSPI is using. With no card in the slot the boot log says:
+
+```
+[sd] no card switch - leaving the shared SPI bus alone
+[sd] mount failed - not probing again this boot
+```
+
+and the display, touch and radios are unaffected.
+
 
 | Menu entry | What happens on this board |
 |---|---|

@@ -1094,10 +1094,20 @@ bool isSDCardAvailable() {
   // Soft failed — pins may still be in RFID bitbang / Scanner remapped state.
   // Only do the destructive reclaim when no radio feature owns the bus.
   if (!feature_active) {
+#if defined(SD_CD)
+    // The switch says a card is there, so reclaim the pins and try once more.
     restoreSdAfterSharedSpi();
+#else
+    // No switch, so the slot may just be empty — and the reclaim tears the
+    // shared SPI bus down and rebuilds it underneath TFT_eSPI (SD.end plus
+    // SPI.end/begin on the object TFT_eSPI holds). Nothing has remapped pins
+    // this early, so there is nothing to reclaim: stop here instead, and let a
+    // feature ask again through sdRetryMount().
+    Serial.println("[sd] no card switch - leaving the shared SPI bus alone");
+#endif
     if (!s_sdFsMounted) {
       s_sdMountGaveUp = true;
-      Serial.println("[sd] no card — not probing again this boot");
+      Serial.println("[sd] mount failed - not probing again this boot");
     }
     return s_sdFsMounted;
   }
