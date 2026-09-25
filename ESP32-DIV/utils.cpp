@@ -878,6 +878,20 @@ void sdRetryMount() {
   s_sdMountGaveUp = false;
 }
 
+/** gpio_reset_pin() for a pin this board may not have.
+ *
+ *  Unpopulated headers define their pins as -1 (PN532 on EVRAS3, the second and
+ *  third nRF24 on every board). That is fine for pinMode(), which range-checks,
+ *  but gpio_reset_pin() is reached through GPIO_IS_VALID_GPIO() - a plain
+ *  comparison that a negative pin slips straight past - and then pokes the pin
+ *  matrix at an out-of-range offset. Never hand it a pin that may not exist. */
+static void sdResetPin(int pin) {
+  if (pin < 0) {
+    return;
+  }
+  gpio_reset_pin((gpio_num_t)pin);
+}
+
 /** Deselect every other SPI slave that shares the SD bus so none holds MISO. */
 static void sdRaiseCsPin(int pin) {
   if (pin < 0) {
@@ -920,10 +934,10 @@ void sdSpiInit() {
   // On classic ESP32 (v1), SD often shares SPI with TFT_eSPI; gpio_reset_pin
   // after tft.init() can WDT/reboot during boot SD mount.
 #if BOARD_HAS_ESP32S3
-  gpio_reset_pin((gpio_num_t)SD_SCLK);
-  gpio_reset_pin((gpio_num_t)SD_MISO);
-  gpio_reset_pin((gpio_num_t)SD_MOSI);
-  gpio_reset_pin((gpio_num_t)SD_CS);
+  sdResetPin(SD_SCLK);
+  sdResetPin(SD_MISO);
+  sdResetPin(SD_MOSI);
+  sdResetPin(SD_CS);
 #endif
   SPI.begin(SD_SCLK, SD_MISO, SD_MOSI, SD_CS);
   SPI.setDataMode(SPI_MODE0);
@@ -951,8 +965,7 @@ void initSDCard() {
   // Classic ESP32: raise CS only. Full SD.begin is deferred — boot mount was
   // rebooting right after the intro ("3 sd").
 #if defined(SD_CS)
-  pinMode(SD_CS, OUTPUT);
-  digitalWrite(SD_CS, HIGH);
+  sdRaiseCsPin(SD_CS);
 #endif
   sdReleaseOtherChipSelects();
   // Block auto-mount from settingsLoad / status bar until an SD feature asks.
@@ -960,7 +973,21 @@ void initSDCard() {
   updateSdCardStatus();
   return;
 #else
+#if defined(SD_CD)
+  // The switch tells us whether a card is there, so the reclaim + mount is
+  // safe: on V2 the SD bus is also the radio bus and this binds it correctly.
   restoreSdAfterSharedSpi();
+#else
+  // No card-detect switch (EVRAS3). The full reclaim tears the shared SPI bus
+  // down and rebuilds it under TFT_eSPI, which is meant for after a feature has
+  // remapped pins — at boot nothing has, and with an empty slot it is pure
+  // risk. Release the chip selects only; settingsLoad() mounts the card over a
+  // soft remount a few lines later if one is actually in the slot.
+#if defined(SD_CS)
+  sdRaiseCsPin(SD_CS);
+#endif
+  sdReleaseOtherChipSelects();
+#endif
   updateSdCardStatus();
 #endif
 }
@@ -1132,16 +1159,14 @@ void reclaimSharedSpiBus() {
   // the card on the same MISO line CC1101 needs.
   sdReleaseOtherChipSelects();
 #if defined(SD_CS)
-  pinMode(SD_CS, OUTPUT);
-  digitalWrite(SD_CS, HIGH);
+  sdRaiseCsPin(SD_CS);
 #endif
 #if defined(CC1101_CS)
-  pinMode(CC1101_CS, OUTPUT);
-  digitalWrite(CC1101_CS, HIGH);
+  sdRaiseCsPin(CC1101_CS);
 #endif
 #if defined(PN532_SS)
-  pinMode(PN532_SS, OUTPUT);
-  digitalWrite(PN532_SS, HIGH);
+  // -1 on boards with no PN532 header; sdRaiseCsPin() skips those.
+  sdRaiseCsPin(PN532_SS);
 #endif
 
   SD.end();
@@ -1151,35 +1176,33 @@ void reclaimSharedSpiBus() {
   SPI.end();
 #if BOARD_HAS_ESP32S3
 #if defined(SD_SCLK) && defined(SD_MISO) && defined(SD_MOSI)
-  gpio_reset_pin((gpio_num_t)SD_SCLK);
-  gpio_reset_pin((gpio_num_t)SD_MISO);
-  gpio_reset_pin((gpio_num_t)SD_MOSI);
+  sdResetPin(SD_SCLK);
+  sdResetPin(SD_MISO);
+  sdResetPin(SD_MOSI);
 #endif
   // PN532 software-SPI may have bitbanged these (on DIV V2 MOSI/MISO are
-  // swapped vs SD/CC1101). Reset them even when they overlap SD pins.
+  // swapped vs SD/CC1101). Reset them even when they overlap SD pins — and
+  // skip them entirely when the board has no PN532, where they are all -1.
 #if defined(PN532_SCK)
-  gpio_reset_pin((gpio_num_t)PN532_SCK);
+  sdResetPin(PN532_SCK);
 #endif
 #if defined(PN532_MISO)
-  gpio_reset_pin((gpio_num_t)PN532_MISO);
+  sdResetPin(PN532_MISO);
 #endif
 #if defined(PN532_MOSI)
-  gpio_reset_pin((gpio_num_t)PN532_MOSI);
+  sdResetPin(PN532_MOSI);
 #endif
 #if defined(PN532_SS)
-  gpio_reset_pin((gpio_num_t)PN532_SS);
-  pinMode(PN532_SS, OUTPUT);
-  digitalWrite(PN532_SS, HIGH);
+  sdResetPin(PN532_SS);
+  sdRaiseCsPin(PN532_SS);
 #endif
 #if defined(SD_CS)
-  gpio_reset_pin((gpio_num_t)SD_CS);
-  pinMode(SD_CS, OUTPUT);
-  digitalWrite(SD_CS, HIGH);
+  sdResetPin(SD_CS);
+  sdRaiseCsPin(SD_CS);
 #endif
 #if defined(CC1101_CS)
-  gpio_reset_pin((gpio_num_t)CC1101_CS);
-  pinMode(CC1101_CS, OUTPUT);
-  digitalWrite(CC1101_CS, HIGH);
+  sdResetPin(CC1101_CS);
+  sdRaiseCsPin(CC1101_CS);
 #endif
 #endif // BOARD_HAS_ESP32S3
 #if defined(SD_SCLK) && defined(SD_MISO) && defined(SD_MOSI) && defined(SD_CS)

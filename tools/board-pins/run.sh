@@ -102,5 +102,22 @@ FEATURE_BLE_DUCKY        = 1
 EXPECT
 echo "   ok"
 
+echo "== raw gpio_reset_pin() calls (must all go through sdResetPin)"
+# IDF's gpio_reset_pin() validates with GPIO_IS_VALID_GPIO(), a plain comparison
+# that -1 passes, and then writes the pin matrix at that offset. Boards with an
+# unpopulated header define those pins as -1 (PN532 on EVRAS3, nRF24 2/3
+# everywhere), so every call has to be guarded - sdResetPin() in utils.cpp is.
+if bad=$(grep -rn 'gpio_reset_pin(' "$src"/*.cpp "$src"/*.ino 2>/dev/null \
+           | grep -v 'gpio_reset_pin((gpio_num_t)pin)' \
+           | grep -vE ':[[:space:]]*(\*|//|/\*)' || true); then
+  if [ -n "$bad" ]; then
+    echo "   unguarded gpio_reset_pin() call:" >&2
+    printf '%s\n' "$bad" >&2
+    echo "   use sdResetPin() from utils.cpp instead" >&2
+    exit 1
+  fi
+fi
+echo "   ok"
+
 echo
-echo "All board pin-map checks passed."
+echo "All board pin-map checks passed." 

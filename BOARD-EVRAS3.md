@@ -332,14 +332,22 @@ rebooting right after the intro"*.
 
 Because there is no switch to say a card is missing, this board also skips the *destructive*
 part of the mount — the one that calls `SD.end()` and `SPI.end()`/`SPI.begin()` on the bus
-TFT_eSPI is using. With no card in the slot the boot log says:
+TFT_eSPI is using. At boot that bus is not reclaimed at all; `settingsLoad()` mounts the
+card through a soft remount a moment later, so a card in the slot still loads your
+settings and touch calibration. Without one:
 
 ```
-[sd] no card switch - leaving the shared SPI bus alone
 [sd] mount failed - not probing again this boot
 ```
 
-and the display, touch and radios are unaffected.
+and the display, touch and radios are unaffected. Open an SD-backed feature to retry.
+
+**Two firmware bugs this board found outright**, both of which reset it during boot:
+
+| bug | why it only bit this board |
+| --- | --- |
+| `gpio_reset_pin((gpio_num_t)PN532_SS)` and the three other PN532 pins were called with values of **-1** | the board has no PN532, so `shared.h` defines those pins as `-1` — and `#if defined(PN532_SCK)` is *true* for a defined-as-minus-1 macro. IDF's `gpio_reset_pin()` validates with `GPIO_IS_VALID_GPIO()`, a plain comparison that `-1` passes, then writes the pin matrix at that offset. Every other board has a real PN532 header (v1/v2/cyd) or does not compile the block, so only EVRAS3 reached it. All such calls now go through `sdResetPin()`, which skips negative pins — and the test suite fails the build if a raw `gpio_reset_pin()` comes back. |
+| the boot mount probed a card-less bus three times and reclaimed the shared SPI bus each time | no card-detect switch, so the `no card → return` short circuit never fired. Fixed by probing once and never reclaiming without a switch. |
 
 
 | Menu entry | What happens on this board |
