@@ -204,6 +204,26 @@ ESP32DIV consists of two boards:
 - **Multiple antennas** - Extended range
 - **IR Transceiver** - Capture & replay IR remotes
 
+### 🧩 Board profiles
+
+`ESP32-DIV/BoardConfig.h` picks the wiring the firmware is built for — all pins for a board
+live in one block of `ESP32-DIV/shared.h`:
+
+| Define | Target |
+|---|---|
+| `BOARD_ESP32_DIV_V2` | ESP32-DIV v2 (default) |
+| `BOARD_ESP32_DIV_V1` | ESP32-DIV v1 |
+| `BOARD_CYD` | Cheap Yellow Display (ESP32-2432S028R) |
+| `BOARD_EVRAS3` | Evrahim S3 — ESP32-S3 N16R8 + ST7789 + XPT2046 + CC1101 + NRF24 → [pin map & build](BOARD-EVRAS3.md) |
+
+Build and test the selected board with one command — it runs the pin map checks, installs
+the matching TFT_eSPI `User_Setup.h` and compiles (add `--dry-run` to just print the
+commands, or `--test-only` to check the wiring without a toolchain):
+
+```bash
+tools/build-and-test.sh
+```
+
 <div>&nbsp;</div>
 
 <table>

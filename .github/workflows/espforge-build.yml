@@ -82,12 +82,13 @@ jobs:
               installed.add(key)
           PY
           find Libraries -type f -name '*.zip' ! -iname '*TFT*' -print0 | while IFS= read -r -d '' zip; do arduino-cli lib install --zip-path "$zip"; done
-          cp "Libraries/User_Setup v2.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
+          # Evrahim S3 uses an ST7789 panel on the shared FSPI bus (touch keeps HSPI)
+          cp "Libraries/User_Setup evras3.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
       - name: Validate selected Arduino board configuration
-        run: arduino-cli board details --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" >/dev/null
+        run: arduino-cli board details --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc" >/dev/null
       - name: Configure selected hardware model
         env:
-          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VTUDMyX0RJVl9WMiIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
+          ESPFORGE_BOARD_CONFIG: "eyJzZWxlY3RlZCI6IkJPQVJEX0VWUkFTMyIsIm1hY3JvcyI6WyJCT0FSRF9DWUQiLCJCT0FSRF9FU1AzMl9ESVZfVjEiLCJCT0FSRF9FU1AzMl9ESVZfVjIiLCJCT0FSRF9FVlJBUzMiXSwicGF0aHMiOlsiRVNQMzItRElWL0JvYXJkQ29uZmlnLmgiXX0="
         run: |
           python - <<'PY'
           import base64, json, os, pathlib, re
@@ -111,11 +112,13 @@ jobs:
                       output.append(f"{prefix}// ESPForge disabled: #define {name}{suffix.rstrip()}{ending}")
               path.write_text("".join(output))
           PY
+      - name: Test board pin map
+        run: tools/build-and-test.sh --test-only
       - name: Compile firmware
-        run: arduino-cli compile --fqbn "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio" --output-dir firmware-output 'ESP32-DIV'
+        run: tools/build-and-test.sh --skip-test --skip-install --no-sync-usersetup --output firmware-output
       - name: Name firmware files for selected hardware
         env:
-          ESPFORGE_ARTIFACT_PREFIX: "Board-Esp32-Div-V2"
+          ESPFORGE_ARTIFACT_PREFIX: "Board-Evrahim-S3"
         run: |
           python - <<'PY'
           import os, pathlib, re
@@ -149,7 +152,8 @@ jobs:
         env:
           ESPFORGE_FRAMEWORK: "arduino"
           ESPFORGE_CHIP: "esp32s3"
-          ESPFORGE_CONFIG_DIGEST: "9d19d5646bbfdc05d5bd91e383c3053743913e17533a9ed6c4e02415020ec3ec"
+          # sha256 of the ESPFORGE_BOARD_CONFIG JSON above; ESPForge rewrites both on the next generated build.
+          ESPFORGE_CONFIG_DIGEST: "f82bc64e786fbac3e0e3024704b11c9ff29dfe47cd53888803aa8e99e000a554"
           ESPFORGE_ANALYZER_VERSION: "targets-v11"
         run: |
           python - <<'PY'

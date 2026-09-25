@@ -904,7 +904,8 @@ static void sdReleaseOtherChipSelects() {
   sdRaiseCsPin(CSN_PIN_3);
 #endif
   // Scanner bit-bangs CE/CSN on these pins; keep CE low / CSN high after leaving.
-#if defined(CE_PIN_3)
+  // Boards with a single nRF24 module set the unused pins to -1.
+#if defined(CE_PIN_3) && (CE_PIN_3 >= 0)
   pinMode(CE_PIN_3, OUTPUT);
   digitalWrite(CE_PIN_3, LOW);
 #endif

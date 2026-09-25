@@ -97,12 +97,12 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 /*──────────────────── Board Selection ────────────────────*/
 // Default is selected in BoardConfig.h. You can also pass a BOARD_* define
 // from your build flags to target a board without editing source.
-#if !defined(BOARD_ESP32_DIV_V2) && !defined(BOARD_CYD) && !defined(BOARD_ESP32_DIV_V1)
+#if !defined(BOARD_ESP32_DIV_V2) && !defined(BOARD_CYD) && !defined(BOARD_ESP32_DIV_V1) && !defined(BOARD_EVRAS3)
 #define BOARD_ESP32_DIV_V2
 #endif
 
-#if (defined(BOARD_ESP32_DIV_V2) + defined(BOARD_CYD) + defined(BOARD_ESP32_DIV_V1)) > 1
-#error "Select only one board: BOARD_ESP32_DIV_V2, BOARD_ESP32_DIV_V1, or BOARD_CYD"
+#if (defined(BOARD_ESP32_DIV_V2) + defined(BOARD_CYD) + defined(BOARD_ESP32_DIV_V1) + defined(BOARD_EVRAS3)) > 1
+#error "Select only one board: BOARD_ESP32_DIV_V2, BOARD_ESP32_DIV_V1, BOARD_CYD, or BOARD_EVRAS3"
 #endif
 
 #if defined(BOARD_CYD)
@@ -135,8 +135,20 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #ifndef BOARD_HAS_ESP32S3
 #define BOARD_HAS_ESP32S3 1
 #endif
+#elif defined(BOARD_EVRAS3)
+/* Evrahim S3: ESP32-S3 N16R8 + ST7789 240x320 + XPT2046 (own SPI bus) +
+ * CC1101 + a single NRF24L01+. Touch-only UI: no PCF8574 button expander. */
+#ifndef ESP32DIV_BOARD_NAME
+#define ESP32DIV_BOARD_NAME "Evrahim S3"
+#endif
+#ifndef HAS_PCF8574_BUTTONS
+#define HAS_PCF8574_BUTTONS 0
+#endif
+#ifndef BOARD_HAS_ESP32S3
+#define BOARD_HAS_ESP32S3 1
+#endif
 #else
-#error "Unknown board: define BOARD_ESP32_DIV_V2, BOARD_ESP32_DIV_V1, or BOARD_CYD"
+#error "Unknown board: define BOARD_ESP32_DIV_V2, BOARD_ESP32_DIV_V1, BOARD_CYD, or BOARD_EVRAS3"
 #endif
 
 /* v1 ESP32 has less internal DRAM for static buffers; v2/S3 keeps full sizes. */
@@ -223,6 +235,24 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #ifndef TOUCH_Y_MAX
 #define TOUCH_Y_MAX 3750
 #endif
+#elif defined(BOARD_EVRAS3)
+/* Generic 2.8" XPT2046 panel defaults. Run Tools -> Touch Calibrate once and the
+ * result is stored in /config/settings.json for this TOUCH_PROFILE_ID. */
+#ifndef TOUCH_PROFILE_ID
+#define TOUCH_PROFILE_ID "EVRAS3"
+#endif
+#ifndef TOUCH_X_MIN
+#define TOUCH_X_MIN 300
+#endif
+#ifndef TOUCH_X_MAX
+#define TOUCH_X_MAX 3800
+#endif
+#ifndef TOUCH_Y_MIN
+#define TOUCH_Y_MIN 300
+#endif
+#ifndef TOUCH_Y_MAX
+#define TOUCH_Y_MAX 3800
+#endif
 #endif
 
 #ifndef TOUCH_PROFILE_ID
@@ -242,7 +272,11 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #endif
 
 #ifndef TFT_ROTATION
-#if defined(BOARD_CYD) || defined(BOARD_ESP32_DIV_V1)
+#if defined(BOARD_CYD) || defined(BOARD_ESP32_DIV_V1) || defined(BOARD_EVRAS3)
+/* CYD / DIV V1 / Evrahim S3 panels are portrait-native.
+ * EVRAS3: the whole UI is laid out for 240x320 portrait; the main menu needs the
+ * full 320 px of height, so 1/3 (landscape) will clip rows until the menus are
+ * made size-aware. Override in BoardConfig.h if you adapt the layout. */
 #define TFT_ROTATION 0
 #else
 #define TFT_ROTATION 2
@@ -250,7 +284,10 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #endif
 
 #ifndef TOUCH_SHARES_TFT_SPI
-/* CYD uses a dedicated VSPI touch bus (T_CLK/T_DIN/T_OUT on 25/32/39); TFT stays on HSPI. */
+/* CYD uses a dedicated VSPI touch bus (T_CLK/T_DIN/T_OUT on 25/32/39); TFT stays on HSPI.
+ * EVRAS3 also uses a dedicated touch bus: on ESP32-S3 the XPT2046 runs on the
+ * second hardware SPI controller (HSPI/SPI3) while TFT + SD + CC1101 + nRF24
+ * share the first one (FSPI/SPI2, GPIO 11/12/13). */
 #define TOUCH_SHARES_TFT_SPI 0
 #endif
 
@@ -262,6 +299,97 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #endif
 
 /*──────────────────── I/O & Pins ────────────────────*/
+#if defined(BOARD_EVRAS3)
+/* ═══════════ Evrahim S3 — ESP32-S3 N16R8 pin map ═══════════
+ * Everything below feeds the per-peripheral #ifndef guards further down this
+ * file, so this block is the single place to edit for this board.
+ *
+ * SHARED DATA BUS — SCK 12 / MOSI 11 / MISO 13
+ *   On ESP32-S3 the Arduino `SPI` object is FSPI (bus 0 / SPI2). TFT_eSPI is
+ *   built WITHOUT USE_HSPI_PORT for this board, so it drives that same
+ *   controller — one bus, one pin set, four chip selects:
+ *     ST7789 TFT ....... CS 10, DC 9, RST 14, BL 7   (see User_Setup evras3.h)
+ *     SD card .......... CS 5
+ *     CC1101 ........... CSN 21, GDO0 4 (TX), GDO2 6 (RX)
+ *     NRF24L01+ ........ CE 47, CSN 48
+ *
+ * TOUCH BUS — XPT2046 on the second controller (HSPI / SPI3), see
+ *   TOUCH_SHARES_TFT_SPI: SCK 38, MOSI 39, MISO 40, CS 41, IRQ 42.
+ *
+ * RESERVED — N16R8 has OCTAL PSRAM, so GPIO 33-37 belong to the PSRAM and are
+ *   not usable. GPIO 45/46 and 3 are strapping pins; 19/20 are native USB;
+ *   43/44 are UART0. GPIO 0 is BOOT / deep-sleep wake (active LOW).
+ */
+#define EVRAS3_BUS_SCK    12
+#define EVRAS3_BUS_MOSI   11
+#define EVRAS3_BUS_MISO   13
+
+/* Backlight: PWM, active HIGH (ledcAttachPin(BACKLIGHT_PIN, PWM_CHANNEL)). */
+#define BACKLIGHT_PIN      7
+
+/* XPT2046 touch — dedicated SPI controller, never the shared bus. */
+#define XPT2046_CLK       38
+#define XPT2046_MOSI      39
+#define XPT2046_MISO      40
+#define XPT2046_CS        41
+#define XPT2046_IRQ       42
+
+/* SD card, shared bus. No card-detect switch wired, so SD_CD stays undefined. */
+#define SD_CS              5
+#define SD_CS_PIN          SD_CS
+#define SD_SCLK            EVRAS3_BUS_SCK
+#define SD_MOSI            EVRAS3_BUS_MOSI
+#define SD_MISO            EVRAS3_BUS_MISO
+
+/* CC1101 sub-GHz, shared bus. setGDO(TX, RX) -> GDO0 = 4, GDO2 = 6. */
+#define CC1101_CS         21
+#define CC1101_SCK         EVRAS3_BUS_SCK
+#define CC1101_MOSI        EVRAS3_BUS_MOSI
+#define CC1101_MISO        EVRAS3_BUS_MISO
+#define SUBGHZ_TX_PIN      4
+#define SUBGHZ_RX_PIN      6
+
+/* One NRF24L01+ (E01-MLO1DP5). Radios 2 and 3 are absent: -1 keeps their
+ * CSN lines undriven so they cannot disturb the module on CE_PIN_1/CSN_PIN_1. */
+#define CE_PIN_1          47
+#define CSN_PIN_1         48
+#define CE_PIN_2          -1
+#define CSN_PIN_2         -1
+#define CE_PIN_3          -1
+#define CSN_PIN_3         -1
+#define NRF24_SCAN_CE      CE_PIN_1
+#define NRF24_SCAN_CSN     CSN_PIN_1
+#define NRF24_SPI_SCK      EVRAS3_BUS_SCK
+#define NRF24_SPI_MOSI     EVRAS3_BUS_MOSI
+#define NRF24_SPI_MISO     EVRAS3_BUS_MISO
+#define NRF24_SPI_SS       CSN_PIN_1
+
+/* UART0 + free Grove I2C port.
+ * RX_PIN/TX_PIN are the legacy external 433 MHz RX/TX lines, not the CC1101's:
+ * nothing reads RX_PIN, and subghz.cpp still toggles TX_PIN in the jammer. They
+ * stay on an unconnected GPIO (8) — pointing TX_PIN at GPIO 4 would have the
+ * ESP32 driving against the CC1101, because GDO0 is the radio's own output. */
+#define RX_PIN             8
+#define TX_PIN             8
+#define I2C_SDA_PIN       15
+#define I2C_SCL_PIN       16
+
+/* Absent hardware. -1 is safe for these: the CS helpers bail out on pin < 0 and
+ * pinMode()/ADC/UART all reject out-of-range pins. IR keeps two real but unused
+ * pins (1/2) because the IR library installs an interrupt on the RX pin and an
+ * invalid pin number there is not worth the risk. */
+#define BUZZER_PIN        -1
+#define BATTERY_ADC_PIN   -1
+#define GPS_UART_RX       -1
+#define GPS_UART_TX       -1
+#define PN532_SCK         -1
+#define PN532_MISO        -1
+#define PN532_MOSI        -1
+#define PN532_SS          -1
+#define IR_RX_PIN          1
+#define IR_TX_PIN          2
+#endif  /* BOARD_EVRAS3 */
+
 // PCF8574 I2C address: auto-detect 0x20-0x27 by default.
 // To force a fixed address, add to BoardConfig.h: #define pcf_ADDR 0x21
 #ifndef pcf_ADDR
@@ -391,7 +519,9 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #define SD_SCLK  12
 #endif
 #endif
-#if !defined(BOARD_CYD) && !defined(BOARD_ESP32_DIV_V1) && !defined(SD_CD)
+/* DIV V2 has a card-detect switch on GPIO 38. EVRAS3 has none, and GPIO 38 is
+ * its touch SCK, so no SD_CD must be defined for that board. */
+#if !defined(BOARD_CYD) && !defined(BOARD_ESP32_DIV_V1) && !defined(BOARD_EVRAS3) && !defined(SD_CD)
 #define SD_CD    38
 #endif
 #ifndef SD_CS_PIN
