@@ -193,7 +193,7 @@ In the Arduino IDE: **Board = "ESP32S3 Dev Module"**, then under Tools —
 | USB Mode | Hardware CDC and JTAG | default, and what the native port needs |
 | Flash Frequency | 80MHz | default |
 | CPU Frequency | 240MHz (WiFi/BT) | default |
-| Erase All Flash Before Sketch Upload | Disabled | keeps NVS/calibration between flashes |
+| Erase All Flash Before Sketch Upload | **Enabled for the first flash**, Disabled afterwards | the first flash of a board (or any flash after changing the partition scheme, flash size, PSRAM mode or CDC setting) must erase: a partition table, NVS block or PHY calibration left over from a different layout makes the WiFi/BLE stack abort during boot |
 
 The 9.9 MB FATFS partition is unused (the firmware talks to the SD card itself) and is
 harmless. Do **not** pick the `ESP32-S3-USB-OTG` board variant.
@@ -231,6 +231,20 @@ after flashing, and the boot log runs at 115200.
 2. Run **Tools → Touch Calibrate** once. The saved values are keyed to profile `EVRAS3` in
    `/config/settings.json` on the SD card.
 3. Format the SD card as FAT32. The firmware creates `/config`, `/logs` and `/captures`.
+
+### First flash of a new board
+
+If the board does not come up, erase it before flashing the firmware. `esptool.py erase_flash`
+(or tick *Erase All Flash Before Sketch Upload* once) clears the partition table, NVS **and**
+the RF calibration that the WiFi/BLE stack reads at start-up — leftovers there are a common
+cause of a boot loop that looks like a panic, and they survive every ordinary re-flash:
+
+```bash
+esptool.py --chip esp32s3 --port /dev/ttyACM0 erase_flash
+tools/build-and-test.sh --board evras3 --upload --port /dev/ttyACM0
+```
+
+Keep the tick box off for all later flashes so NVS and your touch calibration survive.
 
 ## If it reboots instead of showing the menu
 
