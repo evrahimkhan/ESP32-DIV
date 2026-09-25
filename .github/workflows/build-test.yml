@@ -1,20 +1,18 @@
 name: Build and test
 
-# Build and test the firmware on GitHub. Triggered by a push or a pull request,
-# so pushing a branch is enough to get it compiled — no ESPForge dispatch needed.
+# Build and test the firmware on GitHub. Runs on every push and pull request, and
+# on a `ci-run-*` tag - which is how tools/ci-run.sh starts a build on demand
+# without needing the workflow_dispatch permission.
 #
-#   tools/ci-run.sh         dispatch this workflow for a branch and watch it
+#   tools/ci-run.sh         start a build for a branch and watch it
 #   tools/ci-run.sh --list  recent runs
 
 "on":
   push:
     branches:
       - "**"
-    paths:
-      - "ESP32-DIV/**"
-      - "Libraries/**"
-      - "tools/**"
-      - ".github/workflows/build-test.yml"
+    tags:
+      - "ci-run-*"
   pull_request:
     branches:
       - main
