@@ -96,20 +96,32 @@ branch and on pull requests to `main`, so pushing is enough to get a compile:
 A compile failure is published as annotations on the run and in the job summary, so the
 compiler errors are visible without opening the raw log.
 
-`tools/ci-run.sh` drives it from the command line:
+`tools/ci-run.sh` starts a run and reports the result — nothing is compiled on your
+machine:
 
 ```bash
-tools/ci-run.sh                 # dispatch for the current branch, watch, report
-tools/ci-run.sh --no-watch      # dispatch and return
+tools/ci-run.sh                 # start a run for the current branch, watch, report
+tools/ci-run.sh --no-watch      # start it and print the run URL
+tools/ci-run.sh --via push      # start it via the ci-run-* tag trigger
+tools/ci-run.sh --download out  # fetch the artifacts when it succeeds
 tools/ci-run.sh --list          # recent runs
 tools/ci-run.sh --logs          # log of the latest run
 tools/ci-run.sh --cancel        # cancel the latest in-progress run
 tools/ci-run.sh --watch         # attach to a run already in progress
+tools/ci-run.sh --run 123456    # report on one specific run
 tools/ci-run.sh --workflow espforge-build.yml   # the ESPForge workflow instead
+tools/ci-run.sh --local [...]   # compile here instead (build-and-test.sh)
 ```
 
-Dispatching needs `gh` authenticated as *you* (the `actions: write` permission); a push
-needs nothing. Artifacts from a run: `gh run download <id>`.
+There are two ways to start a run and the script picks one:
+
+| trigger | needs | notes |
+| --- | --- | --- |
+| `workflow_dispatch` | a token with `actions: write` | what `gh auth login` as yourself gives you |
+| the `ci-run-*` tag | only the right to push | used automatically when the dispatch is refused with 403; the tag is deleted again on exit |
+
+The exit status is the run's: `0` when it succeeds, `1` when it fails or times out.
+Artifacts from a run: `gh run download <id>`.
 
 The older `ESPForge firmware build` workflow is still there, but it only runs on a
 `workflow_dispatch`/`repository_dispatch` from ESPForge.

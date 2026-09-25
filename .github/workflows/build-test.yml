@@ -181,6 +181,7 @@ jobs:
             tail -20 build.log | annotate 20 || true
           fi
           exit "$status"
+
       - name: Report image size
         run: |
           set -euo pipefail

@@ -43,6 +43,7 @@ Start the firmware build + test workflow on GitHub and report the result.
   tools/ci-run.sh --via push         # force the ci-run-* tag trigger
   tools/ci-run.sh --download DIR     # download the artifacts when the run succeeds
   tools/ci-run.sh --watch            # attach to the newest run without starting one
+  tools/ci-run.sh --run 123456       # report on one specific run (no new run)
   tools/ci-run.sh --list             # recent runs for this workflow
   tools/ci-run.sh --logs             # logs of the most recent run
   tools/ci-run.sh --cancel           # cancel the most recent in-progress run
@@ -54,6 +55,7 @@ Options:
   --branch NAME         Branch to build (default: the current git branch)
   --workflow FILE       Workflow to run (default: build-test.yml)
   --timeout SECONDS     Stop waiting after this long (default 1800)
+  --run ID              Report on an existing run (implies --watch)
   --keep-tag            With --via push, leave the trigger tag in place
   -h, --help            This help
 
@@ -68,6 +70,7 @@ via="auto"
 mode="run"
 download_dir=""
 keep_tag=0
+run_id_arg=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -77,6 +80,7 @@ while [ $# -gt 0 ]; do
     --timeout)  [ $# -ge 2 ] || fail "--timeout needs a value"; timeout_s="$2"; shift 2 ;;
     --via)      [ $# -ge 2 ] || fail "--via needs a value"; via="$2"; shift 2 ;;
     --download) [ $# -ge 2 ] || fail "--download needs a value"; download_dir="$2"; shift 2 ;;
+    --run)      [ $# -ge 2 ] || fail "--run needs a run id"; run_id_arg="$2"; shift 2 ;;
     --keep-tag) keep_tag=1; shift ;;
     --no-watch) mode="start"; shift ;;
     --watch)    mode="watch"; shift ;;
@@ -90,6 +94,8 @@ while [ $# -gt 0 ]; do
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+
+[ -z "$run_id_arg" ] || [ "$mode" != run ] || mode="watch"
 
 case "$via" in auto|dispatch|push) ;; *) fail "--via expects auto, dispatch or push" ;; esac
 case "$workflow_file" in
@@ -166,21 +172,21 @@ case "$mode" in
     exit 0 ;;
 
   logs)
-    id="$(latest_run_id)"
+    id="${run_id_arg:-$(latest_run_id)}"
     [ -n "$id" ] || fail "no runs found for $workflow_file"
     step "Logs for run $id"
     gh run view "$id" --log
     exit 0 ;;
 
   cancel)
-    id="$(latest_run_id)"
+    id="${run_id_arg:-$(latest_run_id)}"
     [ -n "$id" ] || fail "no runs found for $workflow_file"
     step "Cancelling run $id"
     gh run cancel "$id"
     exit 0 ;;
 
   watch)
-    id="$(latest_run_id)"
+    id="${run_id_arg:-$(latest_run_id)}"
     [ -n "$id" ] || fail "no runs found for $workflow_file"
     step "Watching run $id"
     watch_run "$id"
