@@ -207,16 +207,44 @@ arduino-cli upload -p /dev/ttyACM0 --input-dir firmware-output \
   ESP32-DIV
 ```
 
+#### One-shot image (what to use when flashing by hand)
+
+Every CI build also produces a **merged image** — bootloader + partition table +
+`boot_app0` + application in one file, so one write is the whole firmware:
+
+```
+firmware-output/ESP32-DIV-evras3-merged.bin
+```
+
+Flash it at offset **`0x0`**:
+
+```bash
+esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash 0x0 ESP32-DIV-evras3-merged.bin
+```
+
+`0x0` is right for the ESP32-S3 because that is where its bootloader lives (the classic
+ESP32 puts it at `0x1000`). The file is the same layout the four separate writes below
+produce: `0x0` bootloader, `0x8000` partitions, `0xe000` `boot_app0`, `0x10000` app,
+`0xff` in between. To build it locally instead of downloading it:
+
+```bash
+tools/build-and-test.sh --board evras3 --merged      # writes build/evras3/ESP32-DIV-evras3-merged.bin
+```
+
+#### Flashing by hand, piece by piece
+
 `arduino-cli upload` runs esptool for you, which is what you want: it also writes
 `boot_app0.bin`, a file that is **not** in the CI artifact. Only if you flash by hand:
 
 ```bash
 esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash \
-  0x0     build/ESP32-DIV.ino.bootloader.bin \
-  0x8000  build/ESP32-DIV.ino.partitions.bin \
+  0x0     build/evras3/ESP32-DIV.ino.bootloader.bin \
+  0x8000  build/evras3/ESP32-DIV.ino.partitions.bin \
   0xe000  ~/.arduino15/packages/esp32/hardware/esp32/2.0.10/tools/partitions/boot_app0.bin \
-  0x10000 build/ESP32-DIV.ino.bin
+  0x10000 build/evras3/ESP32-DIV.ino.bin
 ```
+
+(Or skip all four writes and use the merged image above.)
 
 If the port does not appear, hold **BOOT (GPIO 0)** while tapping **RESET** to enter
 download mode; it then shows up as `/dev/ttyACM0` (Linux), `/dev/cu.usbmodem*` (macOS) or

@@ -155,7 +155,8 @@ jobs:
           set -uo pipefail
           set +e
           tools/build-and-test.sh --board ${{ matrix.board }} --fqbn "${{ matrix.fqbn }}" \
-            --skip-test --skip-install --no-sync-usersetup --output firmware-output 2>&1 | tee build.log
+            --skip-test --skip-install --no-sync-usersetup --merged \
+            --output firmware-output 2>&1 | tee build.log
           status=${PIPESTATUS[0]}
           set -e
           if [ "$status" -ne 0 ]; then
@@ -195,6 +196,19 @@ jobs:
             echo "fqbn: \`${{ matrix.fqbn }}\`"
             echo
             echo "Flash offsets: bootloader 0x0, partitions 0x8000, boot_app0 0xe000, app 0x10000."
+            echo
+            merged="firmware-output/ESP32-DIV-${{ matrix.board }}-merged.bin"
+            if [ -f "$merged" ]; then
+              echo "**One-shot image** (bootloader + partitions + boot_app0 + app), \`$merged\`:"
+              echo
+              echo '```'
+              echo "esptool.py --chip esp32s3 --port <PORT> write_flash 0x0 $merged"
+              echo '```'
+              echo
+              echo "Flashing the single file at **0x0** is equivalent to the four writes above."
+            else
+              echo "\`$merged\` was NOT produced - check the merged image step in the log."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
         with:

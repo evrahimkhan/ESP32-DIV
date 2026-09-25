@@ -21,6 +21,8 @@ sketch="$root/ESP32-DIV"
 libraries="$root/Libraries"
 board_config="$sketch/BoardConfig.h"
 core_version="2.0.10"
+arduino_data="${ARDUINO_DIRECTORIES_DATA:-$HOME/.arduino15}"
+boot_app0="$arduino_data/packages/esp32/hardware/esp32/$core_version/tools/partitions/boot_app0.bin"
 
 sketchbook="${ARDUINO_DIRECTORIES_USER:-${ARDUINO_USER_DIR:-$HOME/Arduino}}"
 tftespi_dir="$sketchbook/libraries/TFT_eSPI"
@@ -31,6 +33,7 @@ do_test=1
 do_install=0
 do_build=1
 do_upload=0
+do_merged=0
 do_sync_usersetup=1
 dry_run=0
 port=""
@@ -48,6 +51,7 @@ green run here is what CI should produce.
   tools/build-and-test.sh --install       # install arduino-cli core + libs first
   tools/build-and-test.sh --dry-run       # print the commands, run nothing
   tools/build-and-test.sh --upload --port /dev/ttyACM0
+  tools/build-and-test.sh --merged          # ...plus one flashable image
 
 Options:
   --board evras3|v2|v1|cyd  Board to build (default: the one enabled in BoardConfig.h)
@@ -58,6 +62,10 @@ Options:
   --dry-run                 Print the commands instead of running them
   --fqbn FQBN               Override the board's default Arduino FQBN
   --output DIR              Build output directory (default build/<board>)
+  --merged                  Also produce <output>/ESP32-DIV-<board>-merged.bin:
+                            bootloader + partitions + boot_app0 + app in a single
+                            file, written in one shot at the bootloader offset
+                            (0x0 on ESP32-S3, 0x1000 on classic ESP32)
   --upload                  Upload after a successful build
   --port PORT               Serial port for --upload
   --no-sync-usersetup       Do not copy the board's TFT_eSPI User_Setup.h into place
@@ -97,6 +105,7 @@ while [ $# -gt 0 ]; do
     --dry-run)          dry_run=1; shift ;;
     --fqbn)             [ $# -ge 2 ] || fail "--fqbn needs a value"; fqbn_override="$2"; shift 2 ;;
     --output)           [ $# -ge 2 ] || fail "--output needs a value"; output_dir="$2"; shift 2 ;;
+    --merged)           do_merged=1; shift ;;
     --upload)           do_upload=1; shift ;;
     --port)             [ $# -ge 2 ] || fail "--port needs a value"; port="$2"; shift 2 ;;
     --no-sync-usersetup) do_sync_usersetup=0; shift ;;
@@ -146,11 +155,13 @@ fi
 case "$board" in
   evras3)
     macro="BOARD_EVRAS3"; chip="esp32s3"; bootloader_addr="0x0"
+    flash_size="16MB"; flash_freq="80m"
     user_setup="User_Setup evras3.h"
     default_fqbn="esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc"
     ;;
   v2)
     macro="BOARD_ESP32_DIV_V2"; chip="esp32s3"; bootloader_addr="0x0"
+    flash_size="4MB"; flash_freq="80m"
     user_setup="User_Setup v2.h"
     default_fqbn="esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio"
     ;;
@@ -159,6 +170,7 @@ case "$board" in
     # pinned one for these boards, so override with --fqbn if yours differs.
     [ "$board" = v1 ] && macro="BOARD_ESP32_DIV_V1" || macro="BOARD_CYD"
     chip="esp32"; bootloader_addr="0x1000"
+    flash_size="4MB"; flash_freq="40m"
     user_setup="User_Setup $board.h"
     default_fqbn="esp32:esp32:esp32:PSRAM=disabled,PartitionScheme=min_spiffs,FlashMode=dio"
     note "the $board FQBN is a generic dev-module default; use --fqbn to override"
@@ -252,14 +264,72 @@ if [ "$do_build" -eq 1 ]; then
     if [ -n "$app" ]; then
       note "app image    $app ($(wc -c < "$app" | tr -d ' ') bytes)"
     fi
+    merged="$output_dir/ESP32-DIV-$board-merged.bin"
+
+    # ── merged image: everything in one file, one write, one offset ──────────
+    if [ "$do_merged" -eq 1 ]; then
+      step "Merged flash image"
+      for piece in "$output_dir/ESP32-DIV.ino.bootloader.bin" \
+                   "$output_dir/ESP32-DIV.ino.partitions.bin" \
+                   "$boot_app0" \
+                   "$output_dir/ESP32-DIV.ino.bin"; do
+        [ -f "$piece" ] || fail "missing $piece - needed for the merged image"
+      done
+
+      # Written here rather than with `esptool merge_bin`: esptool 5 rejects the
+      # standard Arduino layout because boot_app0.bin (8 KB at 0xe000) ends
+      # exactly where the app image starts (0x10000). The result is identical -
+      # each segment at its offset, 0xff everywhere else.
+      command -v python3 >/dev/null 2>&1 || fail "python3 not found, needed for --merged"
+      run python3 - "$merged" \
+        "$bootloader_addr" "$output_dir/ESP32-DIV.ino.bootloader.bin" \
+        0x8000  "$output_dir/ESP32-DIV.ino.partitions.bin" \
+        0xe000  "$boot_app0" \
+        0x10000 "$output_dir/ESP32-DIV.ino.bin" <<'MERGEPY'
+import sys
+
+out, pairs = sys.argv[1], sys.argv[2:]
+buf = bytearray()
+
+
+def put(addr, path):
+    with open(path, "rb") as fh:
+        data = fh.read()
+    if len(buf) < addr + len(data):
+        buf.extend(b"\xff" * (addr + len(data) - len(buf)))
+    buf[addr:addr + len(data)] = data
+    print("    %-8s %-38s %8d bytes" % (hex(addr), path.rsplit("/", 1)[-1], len(data)))
+
+
+for i in range(0, len(pairs), 2):
+    put(int(pairs[i], 0), pairs[i + 1])
+
+with open(out, "wb") as fh:
+    fh.write(bytes(buf))
+print("    %-8s %-38s %8d bytes" % ("", "MERGED", len(buf)))
+MERGEPY
+
+      if [ "$dry_run" -eq 0 ] && [ -f "$merged" ]; then
+        note "merged image $merged"
+        note "flash it in one shot, offset $bootloader_addr:"
+        note "  esptool.py --chip $chip --port <PORT> write_flash $bootloader_addr $merged"
+      fi
+    fi
+
     step "Flash command"
     cat <<EOF
     esptool.py --chip $chip --port <PORT> write_flash \\
       $bootloader_addr     $output_dir/ESP32-DIV.ino.bootloader.bin \\
       0x8000  $output_dir/ESP32-DIV.ino.partitions.bin \\
-      0xe000  \$HOME/.arduino15/packages/esp32/hardware/esp32/$core_version/tools/partitions/boot_app0.bin \\
+      0xe000  $boot_app0 \\
       0x10000 $output_dir/ESP32-DIV.ino.bin
 EOF
+    if [ "$do_merged" -eq 1 ]; then
+      cat <<EOF
+    # or the whole thing at once (--merged):
+    esptool.py --chip $chip --port <PORT> write_flash $bootloader_addr $merged
+EOF
+    fi
   fi
 fi
 
@@ -271,4 +341,4 @@ if [ "$do_upload" -eq 1 ] && [ "$do_build" -eq 1 ]; then
 fi
 
 step "Done"
-note "board $board: $([ "$do_test" -eq 1 ] && echo -n 'tests passed' || echo -n 'tests skipped')$([ "$do_build" -eq 1 ] && echo -n ', build ok' || true)$([ "$dry_run" -eq 1 ] && echo ' (dry run)' || true)"
+note "board $board: $([ "$do_test" -eq 1 ] && echo -n 'tests passed' || echo -n 'tests skipped')$([ "$do_build" -eq 1 ] && echo -n ', build ok' || true)$([ "$do_merged" -eq 1 ] && [ "$do_build" -eq 1 ] && echo -n ', merged image' || true)$([ "$dry_run" -eq 1 ] && echo ' (dry run)' || true)"
