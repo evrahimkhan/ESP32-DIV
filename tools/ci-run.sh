@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Run the ESPForge firmware build workflow on GitHub for a branch, then report
-# the result. The workflow only triggers on workflow_dispatch/repository_dispatch,
-# so a push alone never builds anything - this is how you make it build.
+# Run the firmware build + test workflow on GitHub for a branch, then report the
+# result. The workflow also triggers on every push, so this is for the cases
+# where you want a build on demand - or just want to watch one.
 #
 #   tools/ci-run.sh                    # dispatch for the current branch and watch
 #   tools/ci-run.sh --no-watch         # dispatch and return immediately
@@ -15,8 +15,7 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-workflow_file="espforge-build.yml"
-workflow_name="ESPForge firmware build"
+workflow_file="build-test.yml"
 
 step() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 note() { printf '    %s\n' "$*"; }
@@ -24,21 +23,24 @@ fail() { printf '\n\033[31mERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 usage() {
   cat <<'EOF'
-Run the ESPForge firmware build workflow on GitHub and report the result.
+Run the firmware build + test workflow on GitHub and report the result.
 
   tools/ci-run.sh                    # dispatch for the current branch and watch it
   tools/ci-run.sh --no-watch         # dispatch, print the run URL, exit
   tools/ci-run.sh --branch main      # dispatch for another branch
+  tools/ci-run.sh --watch            # attach to the newest run without dispatching
   tools/ci-run.sh --list             # recent runs for this workflow
   tools/ci-run.sh --logs             # logs of the most recent run
   tools/ci-run.sh --cancel           # cancel the most recent in-progress run
-  tools/ci-run.sh --local            # run the same steps here instead of on GitHub
-  tools/ci-run.sh --watch            # attach to the most recent run without dispatching
+  tools/ci-run.sh --local --test-only  # run the same steps here; everything
+                                       # after --local goes to build-and-test.sh
 
 Options:
   --repo OWNER/NAME     Repository (default: from the git remote)
   --branch NAME         Branch to build (default: the current git branch)
-  --uuid UUID           Build identifier (default: generated)
+  --workflow FILE       Workflow to run (default: build-test.yml;
+                        espforge-build.yml also works and gets its inputs filled in)
+  --uuid UUID           Build identifier for espforge-build.yml (default: generated)
   --timeout SECONDS     Stop waiting after this long (default 1800)
   -h, --help            This help
 
@@ -56,6 +58,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --repo)     [ $# -ge 2 ] || fail "--repo needs a value"; repo="$2"; shift 2 ;;
     --branch)   [ $# -ge 2 ] || fail "--branch needs a value"; branch="$2"; shift 2 ;;
+    --workflow) [ $# -ge 2 ] || fail "--workflow needs a value"; workflow_file="$2"; shift 2 ;;
     --uuid)     [ $# -ge 2 ] || fail "--uuid needs a value"; uuid="$2"; shift 2 ;;
     --timeout)  [ $# -ge 2 ] || fail "--timeout needs a value"; timeout_s="$2"; shift 2 ;;
     --no-watch) mode="dispatch-nowait"; shift ;;
@@ -63,16 +66,19 @@ while [ $# -gt 0 ]; do
     --list)     mode="list"; shift ;;
     --logs)     mode="logs"; shift ;;
     --cancel)   mode="cancel"; shift ;;
-    --local)    mode="local"; shift ;;
+    # Everything after --local belongs to build-and-test.sh, so hand over now
+    # rather than letting the parser above reject its flags.
+    --local)    shift; exec "$here/build-and-test.sh" "$@" ;;
     -h|--help)  usage; exit 0 ;;
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
 
-# ── local mode needs nothing from GitHub ─────────────────────────────────────
-if [ "$mode" = local ]; then
-  exec "$here/build-and-test.sh"
-fi
+case "$workflow_file" in
+  build-test.yml)     workflow_name="Build and test" ;;
+  espforge-build.yml) workflow_name="ESPForge firmware build" ;;
+  *)                  workflow_name="$workflow_file" ;;
+esac
 
 command -v gh >/dev/null 2>&1 || fail "gh (GitHub CLI) not found. Install it, or use --local."
 gh auth status >/dev/null 2>&1 || fail "gh is not authenticated. Run: gh auth login"
@@ -177,26 +183,36 @@ else
   note "warning: $branch is not on origin - push it first or the CI checkout will fail"
 fi
 
-if [ -z "$uuid" ]; then
-  if command -v uuidgen >/dev/null 2>&1; then
-    uuid="$(uuidgen | tr 'A-Z' 'a-z')"
-  elif [ -r /proc/sys/kernel/random/uuid ]; then
-    uuid="$(cat /proc/sys/kernel/random/uuid)"
-  else
-    uuid="$(date +%s)-$RANDOM"
+# Only espforge-build.yml declares dispatch inputs; passing fields to a workflow
+# that does not declare them is a 422, so the other workflows get none.
+dispatch_fields=()
+match_mode="newest"
+if [ "$workflow_file" = espforge-build.yml ]; then
+  if [ -z "$uuid" ]; then
+    if command -v uuidgen >/dev/null 2>&1; then
+      uuid="$(uuidgen | tr 'A-Z' 'a-z')"
+    elif [ -r /proc/sys/kernel/random/uuid ]; then
+      uuid="$(cat /proc/sys/kernel/random/uuid)"
+    else
+      uuid="$(date +%s)-$RANDOM"
+    fi
   fi
+  dispatch_fields=(-f "espforge_build_uuid=$uuid" -f "espforge_source_commit=$sha")
+  match_mode="uuid"
+elif [ -n "$uuid" ]; then
+  note "note: --uuid only applies to espforge-build.yml; ignoring it here"
+  uuid=""
 fi
 
 step "Dispatch: $workflow_name"
 note "repo      $repo"
 note "branch    $branch"
 note "commit    $sha"
-note "uuid      $uuid"
+[ -n "$uuid" ] && note "uuid      $uuid"
 
 dispatch_err="$(mktemp)"
 if ! gh workflow run "$workflow_file" --ref "$branch" \
-      -f espforge_build_uuid="$uuid" \
-      -f espforge_source_commit="$sha" 2> "$dispatch_err"; then
+      ${dispatch_fields[@]+"${dispatch_fields[@]}"} 2> "$dispatch_err"; then
   msg="$(cat "$dispatch_err")"
   rm -f "$dispatch_err"
   case "$msg" in
@@ -219,15 +235,31 @@ if [ "$mode" = "dispatch-nowait" ]; then
   exit 0
 fi
 
-# GitHub creates the run asynchronously and does not return its id, so find it
-# by the uuid that the workflow puts in its run name.
+# GitHub creates the run asynchronously and never returns its id, so find it
+# again: by the uuid the ESPForge workflow puts in its run name, or otherwise by
+# the newest run on this branch that appeared after the dispatch.
 step "Waiting for the run to appear"
+if [ "$match_mode" = uuid ]; then
+  find_run="gh run list --workflow $workflow_file --branch $branch --limit 10 \
+            --json databaseId,displayTitle \
+            --jq '.[] | select(.displayTitle | contains(\"$uuid\")) | .databaseId'"
+else
+  # A few seconds of slack: GitHub's clock and ours are not the same clock.
+  if since="$(date -u -d '-30 seconds' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" && [ -n "$since" ]; then
+    :
+  elif since="$(date -u -v-30S +%Y-%m-%dT%H:%M:%SZ 2>/dev/null)" && [ -n "$since" ]; then
+    :
+  else
+    since="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  fi
+  find_run="gh run list --workflow $workflow_file --branch $branch --limit 10 \
+            --json databaseId,createdAt \
+            --jq '[.[] | select(.createdAt >= \"$since\")] | sort_by(.createdAt) | if length > 0 then .[-1].databaseId else \"\" end'"
+fi
+
 run_id=""
 for _ in $(seq 1 30); do
-  run_id="$(gh run list --workflow "$workflow_file" --branch "$branch" --limit 10 \
-              --json databaseId,displayTitle \
-              --jq ".[] | select(.displayTitle | contains(\"$uuid\")) | .databaseId" \
-            | head -1)"
+  run_id="$(eval "$find_run" | head -1 || true)"
   [ -n "$run_id" ] && break
   sleep 4
 done

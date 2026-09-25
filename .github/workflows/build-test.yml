@@ -1,0 +1,176 @@
+name: Build and test
+
+# Build and test the firmware on GitHub. Triggered by a push or a pull request,
+# so pushing a branch is enough to get it compiled — no ESPForge dispatch needed.
+#
+#   tools/ci-run.sh         dispatch this workflow for a branch and watch it
+#   tools/ci-run.sh --list  recent runs
+
+"on":
+  push:
+    branches:
+      - "**"
+    paths:
+      - "ESP32-DIV/**"
+      - "Libraries/**"
+      - "tools/**"
+      - ".github/workflows/build-test.yml"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch supersedes the run already in flight.
+concurrency:
+  group: build-test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── host-side checks: pin map for every board profile, no toolchain needed ──
+  pinmap:
+    name: Pin map checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+
+      - name: Check every board profile
+        run: tools/build-and-test.sh --test-only
+
+  # ── firmware compile, one job per board profile ───────────────────────────
+  firmware:
+    name: Build ${{ matrix.sketch }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: pinmap
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - board: evras3
+            macro: BOARD_EVRAS3
+            sketch: Evrahim S3
+            fqbn: "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc"
+          - board: v2
+            macro: BOARD_ESP32_DIV_V2
+            sketch: Esp32 Div V2
+            fqbn: "esp32:esp32:esp32s3:PSRAM=enabled,PartitionScheme=min_spiffs,FlashMode=dio"
+    steps:
+      - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8
+        with:
+          persist-credentials: false
+          submodules: recursive
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.11"
+      - name: Install Arduino CLI
+        run: |
+          python -m pip install --disable-pip-version-check pyserial==3.5
+          curl --proto '=https' --tlsv1.2 -fsSLo arduino-cli.tar.gz https://github.com/arduino/arduino-cli/releases/download/v1.3.1/arduino-cli_1.3.1_Linux_64bit.tar.gz
+          echo "376428d7d45be640c00812a71612e1742edc2f5f9ee3742a2d6da7870e079588  arduino-cli.tar.gz" | sha256sum --check --strict
+          mkdir -p bin && tar -xzf arduino-cli.tar.gz -C bin arduino-cli
+          echo "$PWD/bin" >> "$GITHUB_PATH"
+      - name: Install ESP32 core
+        run: |
+          ./bin/arduino-cli config init
+          ./bin/arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          ./bin/arduino-cli config set library.enable_unsafe_install true
+          ./bin/arduino-cli core update-index
+          ./bin/arduino-cli core install esp32:esp32@2.0.10
+          cp "Libraries/platform.txt" "$HOME/.arduino15/packages/esp32/hardware/esp32/2.0.10/platform.txt"
+      - name: Install detected libraries
+        run: |
+          arduino-cli lib install 'PCF8574 library@2.3.7'
+          arduino-cli lib install 'Adafruit PN532@1.3.4'
+          arduino-cli lib install 'ArduinoJson@6.18.2'
+          arduino-cli lib install 'TFT_eSPI@2.5.43'
+          arduino-cli lib install 'XPT2046_Touchscreen@1.4'
+          arduino-cli lib install 'RF24@1.5.0'
+          arduino-cli lib install 'rc-switch@2.6.4'
+          arduino-cli lib install 'NimBLE-Arduino@1.4.2'
+          arduino-cli lib install 'IRremoteESP8266@2.8.6'
+          arduino-cli lib install 'arduinoFFT@1.6.2'
+          python - <<'PY'
+          import pathlib, re, shutil
+          destination = pathlib.Path.home() / 'Arduino' / 'libraries'
+          destination.mkdir(parents=True, exist_ok=True)
+          def metadata(path):
+              values = {}
+              for line in path.read_text(errors='ignore').splitlines():
+                  if '=' in line:
+                      key, value = line.split('=', 1); values[key.strip().lower()] = value.strip()
+              return values
+          installed = {re.sub(r'[^a-z0-9]', '', metadata(path).get('name', path.parent.name).lower()) for path in destination.glob('*/library.properties')}
+          for properties in pathlib.Path('.').glob('**/library.properties'):
+              if '.git' in properties.parts or len(properties.parts) > 8: continue
+              info = metadata(properties); key = re.sub(r'[^a-z0-9]', '', info.get('name', properties.parent.name).lower())
+              if not key or key in installed: continue
+              target = destination / re.sub(r'[^A-Za-z0-9_.-]', '-', properties.parent.name)
+              if not target.exists(): shutil.copytree(properties.parent, target)
+              installed.add(key)
+          PY
+          find Libraries -type f -name '*.zip' ! -iname '*TFT*' -print0 | while IFS= read -r -d '' zip; do arduino-cli lib install --zip-path "$zip"; done
+      - name: Select the board in BoardConfig.h
+        env:
+          BOARD_CONFIG_JSON: >-
+            {"selected":"${{ matrix.macro }}",
+             "macros":["BOARD_CYD","BOARD_ESP32_DIV_V1","BOARD_ESP32_DIV_V2","BOARD_EVRAS3"],
+             "paths":["ESP32-DIV/BoardConfig.h"]}
+        run: |
+          python - <<'PY'
+          import json, os, pathlib, re
+          cfg = json.loads(os.environ["BOARD_CONFIG_JSON"])
+          names = set(cfg["macros"])
+          for filename in cfg["paths"]:
+              path = pathlib.Path(filename)
+              if not path.is_file():
+                  continue
+              lines = path.read_text(errors="ignore").splitlines(keepends=True)
+              output = []
+              for line in lines:
+                  match = re.match(r"^(\s*)(?://\s*)?#\s*define\s+([A-Z][A-Z0-9_]*)(.*)$", line)
+                  if not match or match.group(2) not in names:
+                      output.append(line); continue
+                  prefix, name, suffix = match.groups()
+                  ending = chr(10) if line.endswith(chr(10)) else ""
+                  if name == cfg["selected"]:
+                      output.append(f"{prefix}#define {name}{suffix.rstrip()}{ending}")
+                  else:
+                      output.append(f"{prefix}// CI disabled: #define {name}{suffix.rstrip()}{ending}")
+              path.write_text("".join(output))
+          PY
+      - name: Select the TFT_eSPI pin configuration
+        run: |
+          set -euo pipefail
+          cp "Libraries/User_Setup ${{ matrix.board }}.h" "$HOME/Arduino/libraries/TFT_eSPI/User_Setup.h"
+      - name: Validate the Arduino board configuration
+        run: arduino-cli board details --fqbn "${{ matrix.fqbn }}" >/dev/null
+      - name: Test the board pin map
+        run: tools/build-and-test.sh --board ${{ matrix.board }} --test-only
+      - name: Compile firmware
+        run: tools/build-and-test.sh --board ${{ matrix.board }} --fqbn "${{ matrix.fqbn }}" --skip-test --skip-install --no-sync-usersetup --output firmware-output
+      - name: Report image size
+        run: |
+          set -euo pipefail
+          {
+            echo "### ${{ matrix.sketch }} (\`${{ matrix.board }}\`)"
+            echo
+            echo '```'
+            find firmware-output -name '*.bin' -printf '%-40p %10s bytes\n' | sort
+            echo '```'
+            echo
+            echo "fqbn: \`${{ matrix.fqbn }}\`"
+            echo
+            echo "Flash offsets: bootloader 0x0, partitions 0x8000, boot_app0 0xe000, app 0x10000."
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808
+        with:
+          name: ESP32-DIV-${{ matrix.board }}
+          path: firmware-output/
+          if-no-files-found: error
+          retention-days: 30
