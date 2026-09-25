@@ -83,10 +83,20 @@ profiles and fails to build if `Libraries/User_Setup evras3.h` and `shared.h` di
 a pin, if two chip selects collide on the shared bus, if `TX_PIN` lands on a CC1101 GDO net,
 or if anything is assigned to GPIO 33-37.
 
-### Triggering CI
+### CI
 
-The GitHub workflow (`ESPForge firmware build`) only runs on a dispatch — a push alone
-never builds anything. `tools/ci-run.sh` dispatches it for a branch and watches the result:
+`.github/workflows/build-test.yml` builds and tests on GitHub on **every push** to any
+branch and on pull requests to `main`, so pushing is enough to get a compile:
+
+| job | what it does |
+| --- | --- |
+| `pinmap` | host-side pin map checks for all four board profiles; no toolchain, fails in seconds |
+| `firmware` (matrix: `evras3`, `v2`) | installs arduino-cli + ESP32 core 2.0.10, selects the board macro, drops in that board's `User_Setup.h`, runs the pin map check, compiles, uploads the images |
+
+A compile failure is published as annotations on the run and in the job summary, so the
+compiler errors are visible without opening the raw log.
+
+`tools/ci-run.sh` drives it from the command line:
 
 ```bash
 tools/ci-run.sh                 # dispatch for the current branch, watch, report
@@ -95,10 +105,14 @@ tools/ci-run.sh --list          # recent runs
 tools/ci-run.sh --logs          # log of the latest run
 tools/ci-run.sh --cancel        # cancel the latest in-progress run
 tools/ci-run.sh --watch         # attach to a run already in progress
+tools/ci-run.sh --workflow espforge-build.yml   # the ESPForge workflow instead
 ```
 
-It needs `gh` authenticated as *you* — creating a dispatch needs the `actions: write`
-permission. Artifacts from a run: `gh run download <id>`.
+Dispatching needs `gh` authenticated as *you* (the `actions: write` permission); a push
+needs nothing. Artifacts from a run: `gh run download <id>`.
+
+The older `ESPForge firmware build` workflow is still there, but it only runs on a
+`workflow_dispatch`/`repository_dispatch` from ESPForge.
 
 ### What the build phase does
 
@@ -134,6 +148,17 @@ esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,Fla
 
 Override with `--fqbn "..."`; drop `CDCOnBoot=cdc` if you would rather have `Serial` on
 UART0 (GPIO 43/44).
+
+## Source changes this board profile needed
+
+Three edits to the shared firmware. None of them changes behaviour on the other boards —
+the first two only matter when the ILI9341 macros or a second nRF24 are absent:
+
+| file | change | why |
+| --- | --- | --- |
+| `ESP32-DIV/utils.cpp` | `ILI9341_VSCRDEF`/`ILI9341_VSCRSADD` → `LCD_CMD_VSCRDEF`/`LCD_CMD_VSCRSADD` (`0x33`/`0x37`) | TFT_eSPI only defines those names for the controller in use, so an ST7789 build never sees the `ILI9341_*` spelling and did not compile. The MIPI DCS values are the same for ILI9341, ST7789 and ST7796. |
+| `ESP32-DIV/utils.cpp` | `#if defined(CE_PIN_3)` → `#if defined(CE_PIN_3) && (CE_PIN_3 >= 0)` | this board has a single nRF24, so the second module's pins are `-1`; the old test treated them as present |
+| `ESP32-DIV/Touchscreen.cpp` | map raw touch onto `tft.width()`/`tft.height()` instead of `TFT_WIDTH`/`TFT_HEIGHT` | identical in portrait; still correct if `TFT_ROTATION` is set to 1/3, where the panel reports 320x240 |
 
 ## Flashing
 

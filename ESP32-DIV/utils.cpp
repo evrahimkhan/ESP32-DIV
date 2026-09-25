@@ -1476,8 +1476,16 @@ void runUI() {
     }
 }
 
+// Vertical scrolling commands. TFT_eSPI only names these after the controller in
+// use (ILI9341_VSCR* for the ILI9341 boards, ST7789_VSCR* for the Evrahim S3),
+// so code that has to build for both cannot use either spelling. The MIPI DCS
+// values are the same for ILI9341, ST7789 and ST7796 - see TFT_eSPI's
+// TFT_Drivers/*_Defines.h.
+#define LCD_CMD_VSCRDEF  0x33  // Vertical Scrolling Definition
+#define LCD_CMD_VSCRSADD 0x37  // Vertical Scrolling Start Address
+
 void scrollAddress(uint16_t vsp) {
-  tft.writecommand(ILI9341_VSCRSADD);
+  tft.writecommand(LCD_CMD_VSCRSADD);
   tft.writedata(vsp >> 8);
   tft.writedata(vsp);
 }
@@ -1497,7 +1505,7 @@ int scroll_line() {
 }
 
 void setupScrollArea(uint16_t tfa, uint16_t bfa) {
-  tft.writecommand(ILI9341_VSCRDEF);
+  tft.writecommand(LCD_CMD_VSCRDEF);
   tft.writedata(tfa >> 8);
   tft.writedata(tfa);
   tft.writedata((DISPLAY_HEIGHT - tfa - bfa) >> 8);
