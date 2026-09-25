@@ -224,6 +224,9 @@ commands, or `--test-only` to check the wiring without a toolchain):
 tools/build-and-test.sh
 ```
 
+The CI workflow only runs on a dispatch, so `tools/ci-run.sh` triggers it for a branch and
+reports the result (`--list`, `--logs`, `--cancel` for the usual follow-ups).
+
 <div>&nbsp;</div>
 
 <table>

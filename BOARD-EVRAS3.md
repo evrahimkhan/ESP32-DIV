@@ -83,6 +83,23 @@ profiles and fails to build if `Libraries/User_Setup evras3.h` and `shared.h` di
 a pin, if two chip selects collide on the shared bus, if `TX_PIN` lands on a CC1101 GDO net,
 or if anything is assigned to GPIO 33-37.
 
+### Triggering CI
+
+The GitHub workflow (`ESPForge firmware build`) only runs on a dispatch — a push alone
+never builds anything. `tools/ci-run.sh` dispatches it for a branch and watches the result:
+
+```bash
+tools/ci-run.sh                 # dispatch for the current branch, watch, report
+tools/ci-run.sh --no-watch      # dispatch and return
+tools/ci-run.sh --list          # recent runs
+tools/ci-run.sh --logs          # log of the latest run
+tools/ci-run.sh --cancel        # cancel the latest in-progress run
+tools/ci-run.sh --watch         # attach to a run already in progress
+```
+
+It needs `gh` authenticated as *you* — creating a dispatch needs the `actions: write`
+permission. Artifacts from a run: `gh run download <id>`.
+
 ### What the build phase does
 
 1. Copies `Libraries/User_Setup evras3.h` over the installed
