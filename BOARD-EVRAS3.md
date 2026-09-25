@@ -232,6 +232,50 @@ after flashing, and the boot log runs at 115200.
    `/config/settings.json` on the SD card.
 3. Format the SD card as FAT32. The firmware creates `/config`, `/logs` and `/captures`.
 
+## If it reboots instead of showing the menu
+
+A board that resets while booting shows the logo again and says nothing else, so the
+firmware now reports its own failure. `setup()` records the stage it is in to RTC memory
+(that survives a panic, watchdog and usually a brownout) and the next boot prints the
+reset reason and the stage the last one stopped at — on the panel as well as on USB
+serial:
+
+```
+BOOT DIAGNOSTIC
+reason: BROWNOUT (supply sagged)
+last boot stopped at: BLE stack
+```
+
+Reading it:
+
+| what it says | what it means |
+| --- | --- |
+| `reason: BROWNOUT` | the 3V3 rail sagged below ~2.8 V. Power the board from a supply that can actually deliver the load, check the nRF24 is on its own regulator, and see whether the panel's backlight is being driven straight from GPIO 7. |
+| `reason: crash (panic)` | a real bug or a bad pin. The stage names the guilty subsystem. |
+| `reason: task watchdog` | something blocked for seconds — usually an SD card that is absent or wired wrong. |
+| `no PSRAM found` | the module's PSRAM is not initialising. On an N16R8 the setting has to be **OPI PSRAM**; if the chip is silently running without PSRAM, the BLE stack can then die from the memory loss. |
+| `last boot stopped at: …` | the last stage that ran. The crash is in the stage *after* it. |
+
+The same information goes to the USB serial console, at 115200:
+
+```bash
+arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200
+# or: screen /dev/cu.usbmodem* 115200        (macOS)
+# or: python3 -m serial.tools.miniterm COM5 115200   (Windows)
+```
+
+Serial is on the native USB port because the build sets `CDCOnBoot=cdc`. If nothing appears
+there, the ROM bootloader still reports the reset reason on UART0 (GPIO 43/44):
+
+```
+rst:0xf (BROWN_OUT_RST),boot:0x8 (SPI_FAST_FLASH_BOOT)
+```
+
+**Safe mode.** Hold the touch panel down while powering on (the XPT2046 pulls its IRQ line
+low when touched) and this boot skips the BLE stack, the WiFi/BLE scan tasks and Ducky.
+The panel then says `SAFE MODE - radios skipped`. If the board reaches the menu that way,
+the radio stack is where it dies — and in a pinch you still get a usable device.
+
 ## Behaviour with missing hardware
 
 | Menu entry | What happens on this board |

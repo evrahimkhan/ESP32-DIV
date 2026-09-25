@@ -14,6 +14,8 @@
 #include "utils.h"
 
 #if !BOARD_HAS_ESP32S3
+#include <esp_attr.h>   // RTC_NOINIT_ATTR for the boot trace
+#include <esp_system.h>  // esp_reset_reason()
 #include "soc/soc.h"
 #include "soc/rtc_cntl_reg.h"
 #endif
@@ -4504,18 +4506,159 @@ void handleButtons() {
     }
 }
 
+/*──────────────────────── Boot diagnostics ────────────────────────
+ * A board that resets while booting normally gives no clue at all: the screen
+ * shows the logo again and the USB console is often not attached. Keep the
+ * reset reason and the stage the last boot reached in RTC memory - it survives
+ * a panic, watchdog or brownout - and put both on the panel, so a board that
+ * cannot reach the menu says what stopped it. Cleared once setup() completes.
+ * ------------------------------------------------------------------*/
+RTC_NOINIT_ATTR static uint32_t g_bootTraceMagic;
+RTC_NOINIT_ATTR static uint32_t g_bootTraceStage;
+
+static const uint32_t BOOT_TRACE_MAGIC = 0x44495631u; /* "DIV1" */
+
+static const char* const kBootStageNames[] = {
+  "start",                /* 0 */
+  "display init",         /* 1 */
+  "SD card",              /* 2 */
+  "settings",             /* 3 */
+  "BLE stack",            /* 4 */
+  "USB HID (ducky)",      /* 5 */
+  "scan tasks",           /* 6 */
+  "status bar task",      /* 7 */
+  "battery read",         /* 8 */
+  "menu",                 /* 9 */
+  "touchscreen",          /* 10 */
+  "ready"                 /* 11 */
+};
+static const uint32_t kBootStageCount = sizeof(kBootStageNames) / sizeof(kBootStageNames[0]);
+
+static const char* bootStageName(uint32_t s) {
+  return (s < kBootStageCount) ? kBootStageNames[s] : "unknown";
+}
+
+static const char* bootResetReasonName(esp_reset_reason_t r) {
+  switch (r) {
+    case ESP_RST_POWERON:   return "power-on";
+    case ESP_RST_EXT:       return "reset pin";
+    case ESP_RST_SW:        return "software reset";
+    case ESP_RST_PANIC:     return "crash (panic)";
+    case ESP_RST_INT_WDT:   return "interrupt watchdog";
+    case ESP_RST_TASK_WDT:  return "task watchdog (a task hung)";
+    case ESP_RST_WDT:       return "watchdog";
+    case ESP_RST_DEEPSLEEP: return "deep-sleep wake";
+    case ESP_RST_BROWNOUT:  return "BROWNOUT (supply sagged)";
+    case ESP_RST_SDIO:      return "SDIO reset";
+    default:                return "unknown";
+  }
+}
+
+static bool g_prevBootIncomplete = false;
+static uint32_t g_prevBootStage = 0;
+static esp_reset_reason_t g_resetReason = ESP_RST_UNKNOWN;
+static bool g_safeMode = false;
+
+/** Must run before the first bootStage() call: that is what overwrites the trace. */
+static void bootDiagCapture() {
+  g_prevBootIncomplete = (g_bootTraceMagic == BOOT_TRACE_MAGIC);
+  g_prevBootStage = g_bootTraceStage;
+  g_resetReason = esp_reset_reason();
+
+  Serial.printf("[boot] reset reason: %s\n", bootResetReasonName(g_resetReason));
+  Serial.printf("[boot] chip %s rev %u, %u cores, flash %u KB, psram %u KB\n",
+                ESP.getChipModel(), (unsigned)ESP.getChipRevision(), (unsigned)ESP.getChipCores(),
+                (unsigned)(ESP.getFlashChipSize() / 1024), (unsigned)(ESP.getPsramSize() / 1024));
+  if (g_prevBootIncomplete) {
+    Serial.printf("[boot] previous boot stopped at stage %u: %s\n",
+                  (unsigned)g_prevBootStage, bootStageName(g_prevBootStage));
+  }
+}
+
+/** Marks the stage now running, so a reset in it is visible on the next boot. */
+static void bootStage(uint8_t stage) {
+  g_bootTraceMagic = BOOT_TRACE_MAGIC;
+  g_bootTraceStage = stage;
+  Serial.printf("[boot] stage %u/%u: %s (heap %u, psram %u)\n",
+                (unsigned)stage + 1, (unsigned)kBootStageCount, bootStageName(stage),
+                (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getFreePsram());
+}
+
+/** How the last boot ended, drawn on the panel: reset reason + last stage. */
+static void drawBootDiagnosis() {
+  // v1/CYD have no PSRAM at all, so only the S3 builds can be wrong about it.
+  const bool psramMissing = BOARD_HAS_ESP32S3 && ESP.getPsramSize() == 0;
+  const bool abnormal = g_prevBootIncomplete ||
+                        (g_resetReason != ESP_RST_POWERON && g_resetReason != ESP_RST_DEEPSLEEP);
+  if (!abnormal && !psramMissing && !g_safeMode) {
+    return;
+  }
+
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  int16_t y = 4;
+  tft.setTextColor(UI_WARN, TFT_BLACK);
+  tft.setCursor(4, y);
+  tft.print("BOOT DIAGNOSTIC");
+  y += 12;
+
+  tft.setTextColor(UI_TEXT, TFT_BLACK);
+  tft.setCursor(4, y);
+  tft.printf("reason: %s", bootResetReasonName(g_resetReason));
+  y += 12;
+
+  if (g_prevBootIncomplete) {
+    tft.setCursor(4, y);
+    tft.printf("last boot stopped at: %s", bootStageName(g_prevBootStage));
+    y += 12;
+  }
+  if (psramMissing) {
+    tft.setTextColor(UI_WARN, TFT_BLACK);
+    tft.setCursor(4, y);
+    tft.print("no PSRAM found - wrong PSRAM mode?");
+    y += 12;
+  }
+  if (g_safeMode) {
+    tft.setTextColor(UI_WARN, TFT_BLACK);
+    tft.setCursor(4, y);
+    tft.print("SAFE MODE - radios skipped");
+    y += 12;
+  }
+  (void)y;
+}
+
+/** Hold the touch panel down while powering on to skip the radio stacks. */
+static bool bootSafeModeRequested() {
+// 255 is the library's "no IRQ pin" marker, so skip those boards.
+#if defined(XPT2046_IRQ) && (XPT2046_IRQ >= 0) && (XPT2046_IRQ < 255)
+  pinMode(XPT2046_IRQ, INPUT_PULLUP);
+  delay(2);
+  return digitalRead(XPT2046_IRQ) == LOW;
+#else
+  return false;
+#endif
+}
+
 void setup() {
   Serial.begin(115200);
   delay(50);
+  bootDiagCapture();
   Serial.println("[boot] start");
+  bootStage(0);
 
 #if !BOARD_HAS_ESP32S3
   // Weak USB / backlight load can brownout classic ESP32 during intro.
   WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
 #endif
 
+  g_safeMode = bootSafeModeRequested();
+  if (g_safeMode) {
+    Serial.println("[boot] SAFE MODE (touch held at power-on): radios skipped");
+  }
+
   tft.init();
   tft.setRotation(TFT_ROTATION);
+  bootStage(1);
 
   ledcSetup(PWM_CHANNEL, PWM_FREQ, PWM_RESOLUTION);
   ledcAttachPin(BACKLIGHT_PIN, PWM_CHANNEL);
@@ -4528,10 +4671,15 @@ void setup() {
   loading(100, UI_ICON, 0, 0, 2, true);
 
   tft.fillScreen(TFT_BLACK);
+  // Between the logo and the menu is the window where a bad pin map or a weak
+  // supply shows up, so put the diagnosis on screen before continuing.
+  drawBootDiagnosis();
   displayLogo(TFT_WHITE, 500);
 
+  bootStage(2);
   initSDCard();
 
+  bootStage(3);
 #if BOARD_HAS_ESP32S3
   settingsLoad();
 #else
@@ -4550,33 +4698,58 @@ void setup() {
   Serial.println("PCF8574 buttons disabled for this board");
 #endif
 
+  bootStage(4);
 #if BOARD_HAS_ESP32S3
-  ensureBleStackReady();
+  if (g_safeMode) {
+    Serial.println("[boot] BLE stack skipped (safe mode)");
+  } else {
+    ensureBleStackReady();
+  }
 #else
   // Classic ESP32: defer NimBLE; also skip boot-time WiFi scan task (heap/WDT).
   Serial.println("[boot] BLE/WiFi-bg deferred (v1)");
 #endif
 
+  bootStage(5);
 #if FEATURE_BLE_DUCKY
-  Ducky::setup();
+  if (g_safeMode) {
+    Serial.println("[boot] ducky skipped (safe mode)");
+  } else {
+    Ducky::setup();
+  }
 #endif
 
+  bootStage(6);
 #if BOARD_HAS_ESP32S3
-  WifiScan::startBackgroundScanner();
-  BleScan::startBackgroundScanner();
-  startStatusBarTask();
+  if (g_safeMode) {
+    Serial.println("[boot] WiFi/BLE scanners skipped (safe mode)");
+  } else {
+    WifiScan::startBackgroundScanner();
+    BleScan::startBackgroundScanner();
+  }
 #else
   // Keep boot lightweight on ESP32 — status bar updates from loop() instead.
 #endif
 
+  bootStage(7);
+#if BOARD_HAS_ESP32S3
+  startStatusBarTask();
+#endif
+
+  bootStage(8);
   menu_initialized = false;
   currentBatteryVoltage = readBatteryVoltage();
+
+  bootStage(9);
   displayMenu();
   drawStatusBar(currentBatteryVoltage, false);
 
+  bootStage(10);
   setupTouchscreen();
 
   last_interaction_time = millis();
+  bootStage(11);
+  g_bootTraceMagic = 0;  // setup() finished: the next boot has nothing to report
   Serial.println("[boot] ready");
 }
 
