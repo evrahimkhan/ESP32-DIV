@@ -172,11 +172,43 @@ the first two only matter when the ILI9341 macros or a second nRF24 are absent:
 | `ESP32-DIV/utils.cpp` | `#if defined(CE_PIN_3)` → `#if defined(CE_PIN_3) && (CE_PIN_3 >= 0)` | this board has a single nRF24, so the second module's pins are `-1`; the old test treated them as present |
 | `ESP32-DIV/Touchscreen.cpp` | map raw touch onto `tft.width()`/`tft.height()` instead of `TFT_WIDTH`/`TFT_HEIGHT` | identical in portrait; still correct if `TFT_ROTATION` is set to 1/3, where the panel reports 320x240 |
 
-## Flashing
+## Flash settings
 
-`tools/build-and-test.sh --upload --port /dev/ttyACM0`, or `arduino-cli upload -p
-/dev/ttyACM0 --fqbn "<same fqbn>" ESP32-DIV`, or esptool directly. Flash offsets for the
-ESP32-S3:
+The build and the flash have to agree, so these are the same settings CI compiles with:
+
+```
+esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc
+```
+
+In the Arduino IDE: **Board = "ESP32S3 Dev Module"**, then under Tools —
+
+| Tools entry | Value | Why |
+| --- | --- | --- |
+| USB CDC On Boot | **Enabled** | native USB (GPIO19/20) is used for flashing, the serial console and BadUSB |
+| Flash Size | 16MB (128Mb) | the N16 in N16R8 |
+| PSRAM | **OPI PSRAM** | the R8 is octal PSRAM; QSPI leaves it uninitialised |
+| Partition Scheme | 3M App/9.9MB FATFS | `app3M_fat9M_16MB`: 3 MB per app slot, room for the 1.7 MB image with OTA |
+| Flash Mode | DIO | what the FQBN pins; DIO is safe on this module regardless of strapping |
+| Upload Speed | 921600 (drop to 460800 if it is unreliable) | |
+| USB Mode | Hardware CDC and JTAG | default, and what the native port needs |
+| Flash Frequency | 80MHz | default |
+| CPU Frequency | 240MHz (WiFi/BT) | default |
+| Erase All Flash Before Sketch Upload | Disabled | keeps NVS/calibration between flashes |
+
+The 9.9 MB FATFS partition is unused (the firmware talks to the SD card itself) and is
+harmless. Do **not** pick the `ESP32-S3-USB-OTG` board variant.
+
+To flash:
+
+```bash
+tools/build-and-test.sh --board evras3 --upload --port /dev/ttyACM0   # build + upload
+arduino-cli upload -p /dev/ttyACM0 --input-dir firmware-output \
+  --fqbn "esp32:esp32:esp32s3:FlashSize=16M,PSRAM=opi,PartitionScheme=app3M_fat9M_16MB,FlashMode=dio,CDCOnBoot=cdc" \
+  ESP32-DIV
+```
+
+`arduino-cli upload` runs esptool for you, which is what you want: it also writes
+`boot_app0.bin`, a file that is **not** in the CI artifact. Only if you flash by hand:
 
 ```bash
 esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash \
@@ -187,7 +219,10 @@ esptool.py --chip esp32s3 --port /dev/ttyACM0 write_flash \
 ```
 
 If the port does not appear, hold **BOOT (GPIO 0)** while tapping **RESET** to enter
-download mode.
+download mode; it then shows up as `/dev/ttyACM0` (Linux), `/dev/cu.usbmodem*` (macOS) or
+`COMx` (Windows). GPIO 0 is also the deep-sleep wake pin, so holding BOOT at power-on is
+normal and does not disturb the firmware. The CDC port re-enumerates on the first reset
+after flashing, and the boot log runs at 115200.
 
 ## First boot
 
