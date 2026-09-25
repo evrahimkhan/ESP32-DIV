@@ -4,7 +4,9 @@
 #include <cmath>
 #include <vector>
 #include "driver/gpio.h"
+#include <esp_attr.h>   // RTC_NOINIT_ATTR: remembers a skipped first-run setup
 #include "Touchscreen.h"
+#include "touch_math.h"
 #include "config.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -3231,6 +3233,108 @@ void loop() {
 
 } // namespace TouchTest
 
+/** Two-tap first-run touch setup.
+ *
+ *  Compiled-in defaults can only ever be a guess about which way a panel's raw
+ *  axes run, and a wrong guess flips the whole screen - upside down until
+ *  somebody calibrates. So when no calibration is stored for this board, ask
+ *  for two taps instead: a target near the top-left and one near the
+ *  bottom-right. Two raw readings plus the positions they were aimed at give
+ *  the direction and the limits (touch_math.h), so the board is correct from
+ *  the first boot without anyone guessing its wiring.
+ *
+ *  Timing out costs one boot: a board whose panel never answers is remembered
+ *  in RTC memory and not asked again.
+ */
+RTC_NOINIT_ATTR static uint32_t g_touchSetupSkipped;
+
+static bool touchSetupTap(int targetX, int targetY, int16_t& rawX, int16_t& rawY) {
+  tft.fillScreen(UI_BG);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(UI_TEXT, UI_BG);
+  tft.setCursor(8, 8);
+  tft.print("Touch setup - tap the cross");
+  tft.setCursor(8, 22);
+  tft.setTextColor(UI_DIM_TEXT, UI_BG);
+  tft.print("(speeds up next boot, else skipped)");
+
+  tft.drawCircle(targetX, targetY, 12, UI_ICON);
+  tft.drawLine(targetX - 18, targetY, targetX + 18, targetY, UI_ICON);
+  tft.drawLine(targetX, targetY - 18, targetX, targetY + 18, UI_ICON);
+
+  const uint32_t start = millis();
+  while (millis() - start < 8000) {
+    int16_t x = 0, y = 0;
+    if (readTouchRawXY(x, y, 200)) {
+      rawX = x;
+      rawY = y;
+      // Wait for release so the second target does not read the same press.
+      const uint32_t released = millis();
+      while (millis() - released < 2000) {
+        int16_t hx = 0, hy = 0;
+        if (!readTouchRawXY(hx, hy, 200)) break;
+        delay(20);
+      }
+      return true;
+    }
+    delay(20);
+  }
+  return false;
+}
+
+void touchFirstRunSetup() {
+  if (g_touchSetupSkipped) {
+    return;
+  }
+  // Only when this board has nothing stored - a calibrated board never sees it.
+  if (settingsLoadTouchFromNvs()) {
+    return;
+  }
+
+  const int maxX = tft.width() - 1;
+  const int maxY = tft.height() - 1;
+  const int inset = 24;
+  const int tx1 = inset, ty1 = inset;
+  const int tx2 = maxX - inset, ty2 = maxY - inset;
+
+  int16_t rx1 = 0, ry1 = 0, rx2 = 0, ry2 = 0;
+  if (!touchSetupTap(tx1, ty1, rx1, ry1)) {
+    g_touchSetupSkipped = 1;   // no panel answering; do not stall every boot
+    Serial.println("[touch] first-run setup skipped - no touch detected");
+    return;
+  }
+  if (!touchSetupTap(tx2, ty2, rx2, ry2)) {
+    g_touchSetupSkipped = 1;
+    Serial.println("[touch] first-run setup incomplete - using current values");
+    return;
+  }
+
+  const TouchLimits r =
+      touchLimitsFromTwoPoints(rx1, ry1, tx1, ty1, rx2, ry2, tx2, ty2, maxX, maxY);
+  auto& s = settings();
+  s.touchXMin = r.xMin;
+  s.touchXMax = r.xMax;
+  s.touchYMin = r.yMin;
+  s.touchYMax = r.yMax;
+  const bool saved = settingsSaveTouchToNvs();
+
+  Serial.printf("[touch] two-point setup: x %u..%u y %u..%u (%s)\n",
+                (unsigned)r.xMin, (unsigned)r.xMax, (unsigned)r.yMin, (unsigned)r.yMax,
+                saved ? "stored" : "NOT stored");
+
+  tft.fillScreen(UI_BG);
+  tft.setTextFont(1);
+  tft.setTextSize(1);
+  tft.setTextColor(saved ? UI.ok : UI.warn, UI_BG);
+  tft.setCursor(8, 8);
+  tft.print(saved ? "Touch setup done" : "Touch setup: save failed");
+  tft.setTextColor(UI_TEXT, UI_BG);
+  tft.setCursor(8, 26);
+  tft.print("Fine-tune with Tools > Touch Calibrate");
+  delay(1500);
+}
+
 namespace TouchCalib {
 static int stepIdx = 0;
 static uint16_t xs[4], ys[4];
@@ -3290,16 +3394,11 @@ void loop(){
     const uint16_t rawTop    = (uint16_t)(((uint32_t)ys[0] + ys[1]) / 2);
     const uint16_t rawBottom = (uint16_t)(((uint32_t)ys[2] + ys[3]) / 2);
     auto& s = settings();
-#if TOUCH_INVERT_X
-    s.touchXMin = rawRight; s.touchXMax = rawLeft;
-#else
-    s.touchXMin = rawLeft;  s.touchXMax = rawRight;
-#endif
-#if TOUCH_INVERT_Y
-    s.touchYMin = rawBottom; s.touchYMax = rawTop;
-#else
+    // Store the raw value each screen edge reports, in screen order. Whichever
+    // way the panel runs, touchXMin is what x=0 reports and touchXMax is what
+    // x=max reports, which is all the mapping needs.
+    s.touchXMin = rawLeft;   s.touchXMax = rawRight;
     s.touchYMin = rawTop;    s.touchYMax = rawBottom;
-#endif
 
     bool ok = settingsSave();
 

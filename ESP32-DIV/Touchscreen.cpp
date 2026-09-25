@@ -180,18 +180,12 @@ static void mapTouchToScreen(int16_t rawX, int16_t rawY, int& x, int& y) {
   // tft.width()/tft.height() equal TFT_WIDTH/TFT_HEIGHT, so nothing changes.
   const int maxX = tft.width() - 1;
   const int maxY = tft.height() - 1;
-  // TOUCH_INVERT_* say which way this panel's raw axes run (see shared.h). The
-  // stored limits always come from a calibration on this board, so they match.
-#if TOUCH_INVERT_X
-  x = ::map(rawX, s.touchXMax, s.touchXMin, 0, maxX);
-#else
+  // One formula for every panel. The stored limits are "raw where the screen
+  // edge is", so whichever way this panel's axes run the pair is simply in the
+  // other order and map() interpolates it either way - no direction flag to get
+  // wrong here, and a calibration from any build keeps working.
   x = ::map(rawX, s.touchXMin, s.touchXMax, 0, maxX);
-#endif
-#if TOUCH_INVERT_Y
-  y = ::map(rawY, s.touchYMax, s.touchYMin, 0, maxY);
-#else
   y = ::map(rawY, s.touchYMin, s.touchYMax, 0, maxY);
-#endif
 }
 
 bool readTouchXY(int& x, int& y) {

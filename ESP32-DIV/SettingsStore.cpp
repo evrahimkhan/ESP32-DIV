@@ -58,9 +58,10 @@ bool settingsLoadTouchFromNvs() {
     return false;
   }
   String board = prefs.getString("board", "");
-  const uint8_t wantDir = (uint8_t)((TOUCH_INVERT_X ? 1 : 0) | (TOUCH_INVERT_Y ? 2 : 0));
-  bool ok = (board == TOUCH_PROFILE_ID) && prefs.isKey("xMin") && prefs.isKey("yMax") &&
-            prefs.getUChar("dir", 0xFF) == wantDir;
+  // The stored limits say where each screen edge reads, so they are valid
+  // whichever way the panel runs - never reject them for their direction, or a
+  // board silently falls back to guessed defaults and comes up upside down.
+  bool ok = (board == TOUCH_PROFILE_ID) && prefs.isKey("xMin") && prefs.isKey("yMax");
   if (ok) {
     auto& s = g_settings;
     s.touchXMin = prefs.getUShort("xMin", s.touchXMin);
@@ -80,8 +81,8 @@ bool settingsSaveTouchToNvs() {
   }
   auto& s = g_settings;
   prefs.putString("board", TOUCH_PROFILE_ID);
-  // The limits are only meaningful with the axis direction they were taken
-  // with; a build with the other setting must recalibrate rather than flip.
+  // Kept for diagnostics only ("dir" is what the compiled-in defaults would
+  // have been); nothing reads it when deciding whether to use these values.
   prefs.putUChar("dir", (uint8_t)((TOUCH_INVERT_X ? 1 : 0) | (TOUCH_INVERT_Y ? 2 : 0)));
   prefs.putUShort("xMin", s.touchXMin);
   prefs.putUShort("xMax", s.touchXMax);

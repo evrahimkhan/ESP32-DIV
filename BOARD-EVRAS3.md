@@ -350,27 +350,38 @@ Reading the numbers:
 card in the slot — historically `Save FAILED` meant exactly that, because the settings file
 lives at `/config/settings.json` on the card. With a card present it is written to both.
 
-### If touch is mirrored ("upside down")
+### Touch direction: measured, never assumed
 
-A panel can report either direction on either axis, and the firmware used to hardcode the
-direction, which mapped this panel vertically flipped: touching the top-left landed on the
-bottom-left, and top-right landed on bottom-right. The direction is now a per-board setting
-in `ESP32-DIV/shared.h`:
+A panel can report either axis in either direction. The firmware used to assume it, which is
+why a fresh board came up mirrored or upside down until somebody calibrated it — and
+compiled-in defaults can only ever be a guess about your particular panel.
+
+**First boot: two taps.** With no stored calibration for this board, boot shows
+`Touch setup - tap the cross`, first near the top-left and then near the bottom-right. Two
+raw readings plus the positions they were aimed at give both the direction and the limits
+(`ESP32-DIV/touch_math.h`), so the screen is correct from then on with no guessing. It saves
+that to NVS and never asks again; a board whose panel never answers is remembered in RTC
+memory and not asked again either. Skip it and nothing is lost — just calibrate later.
+
+**The mapping itself has no direction setting.** Stored limits mean "the raw value each
+screen edge reports", so whichever way the panel runs the pair is simply in the other
+order — and `map()` interpolates a reversed pair happily. That is also why a calibration
+saved by an older build keeps working: nothing rejects it for having the "wrong" direction.
+
+**Fine tuning:** `Tools → Touch Calibrate` still does the four-corner version and
+`Tools → Touch Test` shows the live raw/mapped numbers.
+
+`TOUCH_INVERT_X` / `TOUCH_INVERT_Y` in `ESP32-DIV/shared.h` now only seed the *fallback*
+defaults used when a board has no calibration and the two-tap setup was skipped:
 
 | macro | EVRAS3 | v1 / v2 | meaning |
 | --- | --- | --- | --- |
 | `TOUCH_INVERT_X` | 0 | 0 | 1 = raw X grows towards the right of the screen |
-| `TOUCH_INVERT_Y` | **0** | **1** | 1 = raw Y grows towards the **bottom** of the screen |
+| `TOUCH_INVERT_Y` | 0 | 1 | 1 = raw Y grows towards the bottom of the screen |
 
-EVRAS3 now defaults to the usual "raw grows downwards/rightwards" panel. If your panel is
-wired the other way (touch mirrored vertically, or horizontally), flip the matching macro —
-and **run Touch Calibrate again**, because the stored limits are read in that order. The
-calibration itself measures each edge, so it adapts to either direction; the macro decides
-which way round the pair is stored and what an uncalibrated board does.
-
-`tools/board-pins/run.sh` now checks the round trip for every board: it simulates a panel of
-the declared direction, runs the calibration arithmetic, and fails if any corner maps to the
-wrong one — so a mapping that disagrees with the settings cannot ship.
+`tools/board-pins/run.sh` checks all of this on the host for every board and for all four
+panel directions: it simulates the two taps, runs the arithmetic, and requires every screen
+corner to map back to itself — so a mapping that disagrees with a panel cannot ship.
 
 ```bash
 # what the panel reports, over USB serial, while you press it

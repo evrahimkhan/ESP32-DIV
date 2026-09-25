@@ -105,6 +105,8 @@ void initSDCard();
 namespace AppSettingsUI{ void setup(); void loop(); }
 namespace TouchCalib{ void setup(); void loop(); }
 namespace TouchTest{ void setup(); void loop(); }
+/** Two-tap touch setup, only when this board has no stored calibration. */
+void touchFirstRunSetup();
 
 namespace Terminal {
   void terminalSetup();

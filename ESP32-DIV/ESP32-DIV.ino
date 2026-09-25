@@ -4747,6 +4747,10 @@ void setup() {
   currentBatteryVoltage = readBatteryVoltage();
 
   bootStage(9);
+  // Settings (and any stored touch calibration) are loaded by now, so this can
+  // tell whether this board still needs its two taps.
+  touchFirstRunSetup();
+
   displayMenu();
   drawStatusBar(currentBatteryVoltage, false);
 

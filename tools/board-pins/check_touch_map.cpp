@@ -29,6 +29,7 @@
 #define BOARD_EVRAS3
 #endif
 #include "shared.h"
+#include "touch_math.h"
 
 #include <cstdio>
 #include <cstdlib>
@@ -117,6 +118,57 @@ int main() {
   }
   std::printf("   defaults on an uncalibrated panel: x %ld..%ld  y %ld..%ld\n",
               defLeft, defRight, defTop, defBottom);
+
+  // The two-tap first-run setup has to produce working limits for a panel of
+  // either direction - that is the whole point of measuring instead of
+  // guessing. Simulate both taps on all four combinations and require the
+  // resulting limits to place every corner of the screen correctly.
+  for (int invX = 0; invX < 2; ++invX) {
+    for (int invY = 0; invY < 2; ++invY) {
+      // Raw readings of a panel whose axes run the simulated way.
+      const int16_t l = invX ? 3900 : 180;   // raw at the left edge
+      const int16_t r = invX ? 180 : 3900;   // raw at the right edge
+      const int16_t t = invY ? 3900 : 200;   // raw at the top edge
+      const int16_t b = invY ? 200 : 3900;   // raw at the bottom edge
+
+      // The targets sit inset from the corners, so interpolate linearly to them.
+      const int inset = 24;
+      auto rawAt = [](int a, int b2, int from, int to, int at) {
+        return (int16_t)((long)a + ((long)b2 - a) * (at - from) / (to - from));
+      };
+      const int16_t rawX1 = rawAt(l, r, 0, (int)maxX, inset);
+      const int16_t rawX2 = rawAt(l, r, 0, (int)maxX, (int)maxX - inset);
+      const int16_t rawY1 = rawAt(t, b, 0, (int)maxY, inset);
+      const int16_t rawY2 = rawAt(t, b, 0, (int)maxY, (int)maxY - inset);
+
+      const TouchLimits tl = touchLimitsFromTwoPoints(rawX1, rawY1, inset, inset,
+                                                      rawX2, rawY2, (int)maxX - inset,
+                                                      (int)maxY - inset, (int)maxX, (int)maxY);
+
+      const long left   = touchMapRaw(l, tl.xMin, tl.xMax, maxX);
+      const long right  = touchMapRaw(r, tl.xMin, tl.xMax, maxX);
+      const long top    = touchMapRaw(t, tl.yMin, tl.yMax, maxY);
+      const long bottom = touchMapRaw(b, tl.yMin, tl.yMax, maxY);
+
+      std::printf("   two-tap setup invX=%d invY=%d -> x %u..%u y %u..%u\n",
+                  invX, invY, tl.xMin, tl.xMax, tl.yMin, tl.yMax);
+      if (left > 3 || right < maxX - 3) {
+        std::printf("   FAIL left/right edges map to %ld / %ld\n", left, right);
+        failures++;
+      }
+      if (top > 3 || bottom < maxY - 3) {
+        std::printf("   FAIL top/bottom edges map to %ld / %ld\n", top, bottom);
+        failures++;
+      }
+      // Touching near the middle must not land near an edge.
+      const long midX = touchMapRaw((int16_t)(((long)l + r) / 2), tl.xMin, tl.xMax, maxX);
+      const long midY = touchMapRaw((int16_t)(((long)t + b) / 2), tl.yMin, tl.yMax, maxY);
+      if (labs(midX - maxX / 2) > 6 || labs(midY - maxY / 2) > 6) {
+        std::printf("   FAIL centre maps to %ld,%ld\n", midX, midY);
+        failures++;
+      }
+    }
+  }
 
   if (failures) {
     std::printf("   %d touch mapping check(s) failed\n", failures);
