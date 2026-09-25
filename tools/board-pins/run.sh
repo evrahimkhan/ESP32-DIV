@@ -27,6 +27,13 @@ for board in EVRAS3 V2 V1 CYD; do
   echo "== resolved BOARD_$board pin map ($(wc -l < "$tmp/out_$board.txt") settings)"
 done
 
+echo "== touch mapping round trip, every panel direction"
+for board in EVRAS3 V2 V1 CYD; do
+  echo "-- BOARD_$board"
+  $CXX $flags -DUSE_BOARD_$board -o "$tmp/touchmap_$board" "$here/check_touch_map.cpp"
+  "$tmp/touchmap_$board"
+done
+
 echo "== BOARD_EVRAS3 must match the Evrahim S3 wiring"
 diff -u /dev/stdin "$tmp/out_EVRAS3.txt" <<'EXPECT'
 ESP32DIV_BOARD_NAME      = Evrahim S3
@@ -39,6 +46,8 @@ TOUCH_X_MIN              = 300
 TOUCH_X_MAX              = 3800
 TOUCH_Y_MIN              = 300
 TOUCH_Y_MAX              = 3800
+TOUCH_INVERT_X           = 0
+TOUCH_INVERT_Y           = 0
 TFT_WIDTH                = 240
 TFT_HEIGHT               = 320
 PCF8574_AUTO_DETECT      = 1

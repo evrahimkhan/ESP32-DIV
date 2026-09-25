@@ -344,6 +344,28 @@ Reading the numbers:
 card in the slot — historically `Save FAILED` meant exactly that, because the settings file
 lives at `/config/settings.json` on the card. With a card present it is written to both.
 
+### If touch is mirrored ("upside down")
+
+A panel can report either direction on either axis, and the firmware used to hardcode the
+direction, which mapped this panel vertically flipped: touching the top-left landed on the
+bottom-left, and top-right landed on bottom-right. The direction is now a per-board setting
+in `ESP32-DIV/shared.h`:
+
+| macro | EVRAS3 | v1 / v2 | meaning |
+| --- | --- | --- | --- |
+| `TOUCH_INVERT_X` | 0 | 0 | 1 = raw X grows towards the right of the screen |
+| `TOUCH_INVERT_Y` | **0** | **1** | 1 = raw Y grows towards the **bottom** of the screen |
+
+EVRAS3 now defaults to the usual "raw grows downwards/rightwards" panel. If your panel is
+wired the other way (touch mirrored vertically, or horizontally), flip the matching macro —
+and **run Touch Calibrate again**, because the stored limits are read in that order. The
+calibration itself measures each edge, so it adapts to either direction; the macro decides
+which way round the pair is stored and what an uncalibrated board does.
+
+`tools/board-pins/run.sh` now checks the round trip for every board: it simulates a panel of
+the declared direction, runs the calibration arithmetic, and fails if any corner maps to the
+wrong one — so a mapping that disagrees with the settings cannot ship.
+
 ```bash
 # what the panel reports, over USB serial, while you press it
 arduino-cli monitor -p /dev/ttyACM0 -c baudrate=115200

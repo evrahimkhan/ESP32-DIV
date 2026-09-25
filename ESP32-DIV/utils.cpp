@@ -3280,16 +3280,25 @@ void setup(){
 
 void loop(){
   if (stepIdx>=4){
-    uint16_t xMin = min(xs[0], xs[3]);
-    uint16_t xMax = max(xs[1], xs[2]);
-    uint16_t yMin = min(ys[0], ys[1]);
-    uint16_t yMax = max(ys[2], ys[3]);
+    // Each axis comes from the two targets that share an edge, so the panel's
+    // raw direction never has to be guessed here: xs[0]/xs[3] were taken on the
+    // left edge, ys[0]/ys[1] on the top edge. Which way round the pair is
+    // stored is then decided by TOUCH_INVERT_*, the same setting the mapping
+    // reads, so calibration works whichever way the panel runs.
+    const uint16_t rawLeft   = (uint16_t)(((uint32_t)xs[0] + xs[3]) / 2);
+    const uint16_t rawRight  = (uint16_t)(((uint32_t)xs[1] + xs[2]) / 2);
+    const uint16_t rawTop    = (uint16_t)(((uint32_t)ys[0] + ys[1]) / 2);
+    const uint16_t rawBottom = (uint16_t)(((uint32_t)ys[2] + ys[3]) / 2);
     auto& s = settings();
-    s.touchXMin = xMin; s.touchXMax = xMax;
-#if defined(BOARD_CYD)
-    s.touchYMin = yMin; s.touchYMax = yMax;
+#if TOUCH_INVERT_X
+    s.touchXMin = rawRight; s.touchXMax = rawLeft;
 #else
-    s.touchYMin = yMax; s.touchYMax = yMin;
+    s.touchXMin = rawLeft;  s.touchXMax = rawRight;
+#endif
+#if TOUCH_INVERT_Y
+    s.touchYMin = rawBottom; s.touchYMax = rawTop;
+#else
+    s.touchYMin = rawTop;    s.touchYMax = rawBottom;
 #endif
 
     bool ok = settingsSave();
@@ -3301,7 +3310,7 @@ void loop(){
 
     tft.setTextColor(UI_TEXT, UI_BG);
     tft.setCursor(70,28);
-    tft.printf("X:[%u..%u] Y:[%u..%u]", xMin,xMax,yMin,yMax);
+    tft.printf("X:[%u..%u] Y:[%u..%u]", s.touchXMin, s.touchXMax, s.touchYMin, s.touchYMax);
 
     tft.setCursor(70,48);
     tft.print(settingsTouchInNvs() ? "saved to NVS" : "NVS write failed");

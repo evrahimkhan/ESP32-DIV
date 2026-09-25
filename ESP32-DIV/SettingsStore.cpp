@@ -58,7 +58,9 @@ bool settingsLoadTouchFromNvs() {
     return false;
   }
   String board = prefs.getString("board", "");
-  bool ok = (board == TOUCH_PROFILE_ID) && prefs.isKey("xMin") && prefs.isKey("yMax");
+  const uint8_t wantDir = (uint8_t)((TOUCH_INVERT_X ? 1 : 0) | (TOUCH_INVERT_Y ? 2 : 0));
+  bool ok = (board == TOUCH_PROFILE_ID) && prefs.isKey("xMin") && prefs.isKey("yMax") &&
+            prefs.getUChar("dir", 0xFF) == wantDir;
   if (ok) {
     auto& s = g_settings;
     s.touchXMin = prefs.getUShort("xMin", s.touchXMin);
@@ -78,6 +80,9 @@ bool settingsSaveTouchToNvs() {
   }
   auto& s = g_settings;
   prefs.putString("board", TOUCH_PROFILE_ID);
+  // The limits are only meaningful with the axis direction they were taken
+  // with; a build with the other setting must recalibrate rather than flip.
+  prefs.putUChar("dir", (uint8_t)((TOUCH_INVERT_X ? 1 : 0) | (TOUCH_INVERT_Y ? 2 : 0)));
   prefs.putUShort("xMin", s.touchXMin);
   prefs.putUShort("xMax", s.touchXMax);
   prefs.putUShort("yMin", s.touchYMin);

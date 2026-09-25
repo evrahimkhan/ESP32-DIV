@@ -291,6 +291,27 @@ static const uint8_t OBF_WB[]   = {75, 97, 110, 109, 122, 92, 109, 107, 96, 38, 
 #define TOUCH_SHARES_TFT_SPI 0
 #endif
 
+#ifndef TOUCH_INVERT_X
+/* 1 when the controller's raw X grows towards the right of the screen. */
+#define TOUCH_INVERT_X 0
+#endif
+#ifndef TOUCH_INVERT_Y
+/* 1 when the controller's raw Y grows towards the bottom of the screen.
+ *
+ * The display rotation and the touch rotation are separate things, and a panel
+ * can report either direction. v1/v2 panels report Y growing upwards, which is
+ * why the mapping inverted it; EVRAS3 reports the usual downwards direction.
+ * A panel that shows touches mirrored vertically (touching the top lands at the
+ * bottom) or horizontally needs the matching one flipped, and a fresh
+ * Tools -> Touch Calibrate afterwards, because the stored limits are read in
+ * this order. */
+#if defined(BOARD_CYD) || defined(BOARD_EVRAS3)
+#define TOUCH_INVERT_Y 0
+#else
+#define TOUCH_INVERT_Y 1
+#endif
+#endif
+
 #if defined(BOARD_CYD)
 #ifndef TOUCH_ROTATION
 /* Match TFT_ROTATION (RNT CYD test uses the same rotation for tft and touch). */
