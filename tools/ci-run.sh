@@ -189,8 +189,13 @@ case "$mode" in
     id="${run_id_arg:-$(latest_run_id)}"
     [ -n "$id" ] || fail "no runs found for $workflow_file"
     step "Watching run $id"
-    watch_run "$id"
+    watch_run "$id" || true
     report_run "$id" || exit 1
+    if [ -n "$download_dir" ]; then
+      step "Downloading artifacts to $download_dir"
+      gh run download "$id" --dir "$download_dir" || fail "could not download the artifacts"
+      note "done"
+    fi
     exit 0 ;;
 esac
 
@@ -317,11 +322,10 @@ if [ "$watch_status" -eq 124 ]; then
   note "not finished yet - the run keeps going on GitHub"
   exit 1
 fi
-if report_run "$run_id"; then
-  if [ -n "$download_dir" ]; then
-    step "Downloading artifacts to $download_dir"
-    gh run download "$run_id" --dir "$download_dir" && note "done"
-  fi
-  exit 0
+report_run "$run_id" || exit 1
+if [ -n "$download_dir" ]; then
+  step "Downloading artifacts to $download_dir"
+  gh run download "$run_id" --dir "$download_dir" || fail "could not download the artifacts"
+  note "done"
 fi
-exit 1
+exit 0
